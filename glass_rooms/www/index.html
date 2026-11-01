@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ca">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Glass Rooms">
+  <meta name="theme-color" content="#ede9df">
+  <meta name="description" content="El teu espai, al teu ritme. Un panell local per a casa.">
+  <title>Glass Rooms · Casa</title>
+  <link rel="stylesheet" href="./style.css?v=1.0.2">
+</head>
+<body>
+  <div id="css-probe" aria-hidden="true"></div>
+  <div id="boot-status" class="boot-status" role="alert">
+    <strong>Glass Rooms 1.0.2: carregant la interfície.</strong>
+    Si aquest missatge no desapareix, comprova que JavaScript està activat i que aquests tres recursos s’obren sense error:
+    <a href="./style.css?v=1.0.2">CSS</a>,
+    <a href="./app.js?v=1.0.2">JavaScript</a>,
+    <a href="./assets/menjador.svg">imatge</a>.
+    <a href="./diagnostics.html">Obre el diagnòstic independent</a>.
+    CSS i JavaScript han de mostrar text; la imatge ha de mostrar el menjador.
+  </div>
+  <a class="skip-link" href="#main">Ves al contingut</a>
+  <aside class="rail" aria-label="Navegació principal">
+    <div class="brand-mark" aria-label="Glass Rooms"><span></span><span></span><span></span><span></span></div>
+    <nav id="navigation">
+      <button class="nav-button active" data-nav="rooms" aria-label="Habitacions" title="Habitacions"><span class="icon" data-icon="home"></span><span class="nav-label">Casa</span></button>
+      <button class="nav-button" data-nav="overview" aria-label="Resum general" title="Resum general"><span class="icon" data-icon="overview"></span><span class="nav-label">Resum</span></button>
+      <button class="nav-button" data-nav="lights" aria-label="Llums" title="Llums"><span class="icon" data-icon="light"></span><span class="nav-label">Llums</span></button>
+      <button class="nav-button" data-nav="security" aria-label="Seguretat" title="Seguretat"><span class="icon" data-icon="shield"></span><span class="nav-label">Alarma</span></button>
+      <button class="nav-button" data-nav="scenes" aria-label="Escenes i ambient" title="Escenes i ambient"><span class="icon" data-icon="spark"></span><span class="nav-label">Ambient</span></button>
+    </nav>
+    <button class="nav-button rail-settings" id="settings-button" aria-label="Preferències" title="Preferències"><span class="icon" data-icon="settings"></span><span class="nav-label">Ajustos</span></button>
+  </aside>
+
+  <main id="main" tabindex="-1">
+    <header class="topbar">
+      <section class="heading-row" aria-labelledby="page-title">
+        <div><p class="eyebrow" id="eyebrow">EL TEU ESPAI</p><h1 id="page-title">Casa, amb calma.</h1><p class="page-subtitle" id="page-subtitle">Cada estança, al teu ritme.</p></div>
+        <button class="outline-button overview-button" id="overview-button"><span class="icon" data-icon="overview"></span>Resum general</button>
+      </section>
+      <div class="clock-block"><span class="icon time-icon" data-icon="sun" id="time-icon"></span><time id="clock">--:--</time><span id="date"></span></div>
+    </header>
+    <div id="view"></div>
+    <footer class="page-footer"><span><span class="footer-leaf">⌁</span> Un espai per viure-hi bé.</span><span id="last-update">Esperant dades de casa</span></footer>
+  </main>
+
+  <div id="modal-layer" class="modal-layer hidden">
+    <div id="modal-backdrop" class="modal-backdrop"></div>
+    <section class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1">
+      <div class="drawer-head"><div><p class="eyebrow" id="modal-eyebrow">GLASS ROOMS</p><h2 id="modal-title"></h2></div><button id="close-modal" class="icon-button" aria-label="Tanca"><span class="icon" data-icon="close"></span></button></div>
+      <div id="modal-content" class="drawer-content"></div>
+    </section>
+  </div>
+  <div id="login-layer" class="login-layer hidden">
+    <form id="login-form" class="login-card">
+      <p class="eyebrow">BENVINGUT A CASA</p><h2>El teu espai privat.</h2><p>Introdueix la contrasenya del panell per connectar amb casa.</p>
+      <label for="panel-password">Contrasenya del panell</label><input id="panel-password" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <p id="login-transport" class="muted"></p><p id="login-error" role="alert"></p><button type="submit" class="primary-button" id="login-submit">Entra a casa <span>→</span></button>
+    </form>
+  </div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <noscript><div class="noscript">Activa JavaScript a Safari per utilitzar el panell. No s’ha enviat cap ordre.</div></noscript>
+  <script src="./boot.js?v=1.0.2"></script>
+  <script src="./app.js?v=1.0.2"></script>
+</body>
+</html>

@@ -1,0 +1,886 @@
+#!/usr/bin/env python3
+"""Glass Rooms: fixed inventory, fail-closed controls and a private HA API bridge.
+
+Only Python's standard library is required. Never log requests, headers, bodies,
+upstream responses, exception text or credentials. The Supervisor token stays
+inside this process. No action is retried automatically.
+"""
+
+import argparse
+from concurrent.futures import ThreadPoolExecutor
+import datetime
+import hashlib
+import hmac
+import http.cookies
+import ipaddress
+import json
+import math
+import os
+from pathlib import Path
+import re
+import secrets
+import socket
+import ssl
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib import error, parse, request
+
+try:
+    from .catalog import BY_ID, CATALOG, ROOMS, ROOM_IDS, SLOT_BY_ID, catalog_for
+except ImportError:
+    from catalog import BY_ID, CATALOG, ROOMS, ROOM_IDS, SLOT_BY_ID, catalog_for
+
+ROOT = Path(__file__).resolve().parent / "www"
+UPSTREAM = "http://supervisor/core/api"
+SESSION_SECONDS = 12 * 60 * 60
+COOKIE_NAME = "glass_rooms_session"
+MAX_BODY = 4096
+ARM_FEATURES = {
+    "alarm_arm_home": (1, "Armar a casa"),
+    "alarm_arm_away": (2, "Armar fora"),
+    "alarm_arm_night": (4, "Armar de nit"),
+    "alarm_arm_vacation": (32, "Armar vacances"),
+}
+ACTION_NAMES = {
+    "light": {"turn_on", "turn_off", "brightness", "color_temp_kelvin"},
+    "switch": {"turn_on", "turn_off"},
+    "input_boolean": {"turn_on", "turn_off"},
+    "scene": {"turn_on"},
+    "alarm_control_panel": set(ARM_FEATURES) | {"alarm_disarm"},
+    "water_heater": {"set_operation_mode"},
+    "fan": {"turn_on", "turn_off", "set_percentage"},
+    "media_player": {"turn_on", "turn_off", "media_play", "media_pause", "volume_set"},
+}
+ATTRS = {
+    "light": {"supported_features", "supported_color_modes", "brightness", "color_mode",
+              "color_temp_kelvin", "min_color_temp_kelvin", "max_color_temp_kelvin"},
+    "switch": {"lights"},
+    "input_boolean": set(),
+    "scene": set(),
+    "alarm_control_panel": {"supported_features", "code_format", "code_arm_required"},
+    "sensor": {"unit_of_measurement", "device_class"},
+    "binary_sensor": {"device_class"},
+    "script": set(),
+    "water_heater": {"supported_features", "current_temperature", "temperature_unit",
+                     "operation_mode", "operation_list"},
+    "fan": {"supported_features", "percentage", "percentage_step"},
+    "media_player": {"supported_features", "volume_level", "is_volume_muted", "media_title", "media_artist"},
+}
+PRIVATE_NETS = [ipaddress.ip_network(value) for value in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "fc00::/7", "::1/128")]
+
+
+class PublicError(Exception):
+    """Only fixed, non-secret messages may be passed into this exception."""
+
+    def __init__(self, message, status=400):
+        self.message = message
+        self.status = status
+        super().__init__(message)
+
+
+def number(value):
+    return isinstance(value, (float, int)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def short_string(value, limit=160):
+    return isinstance(value, str) and len(value) <= limit and not any(ord(c) < 32 for c in value)
+
+
+def authority(value):
+    """Validate an exact Host value; never trust forwarded headers or suffixes."""
+    if not short_string(value, 253) or not value or re.search(r"[\s/@\\?#,]", value):
+        raise ValueError("Host invàlid")
+    try:
+        url = parse.urlsplit("//" + value)
+        port = url.port
+        hostname = url.hostname
+    except ValueError:
+        raise ValueError("Host invàlid") from None
+    if not hostname or url.username or url.password or url.path or value.endswith(":"):
+        raise ValueError("Host invàlid")
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("Host invàlid")
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        if not re.fullmatch(r"[a-zA-Z0-9](?:[a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?", hostname):
+            raise ValueError("Host invàlid") from None
+        if ".." in hostname:
+            raise ValueError("Host invàlid")
+    return value.lower()
+
+
+def list_option(options, name):
+    value = options.get(name, [])
+    if not isinstance(value, list) or len(value) > 256 or any(not isinstance(v, str) for v in value):
+        raise ValueError("L'opció " + name + " ha de ser una llista de text.")
+    return value
+
+
+def action_allowed(entity_id, action, by_id=None):
+    item = (by_id if by_id is not None else BY_ID).get(entity_id)
+    return bool(item and action in ACTION_NAMES.get(item["domain"], set())
+                and not (item["category"] == "water" and item["domain"] == "switch"))
+
+
+class Settings:
+    def __init__(self, options, preview=False, port=8099, lan_preview=False, lan_address=None):
+        self.preview = preview
+        self.verified = set()
+        self.room_assignments = {}
+        self.alarm_modes = set()
+        self.arm_code = "unknown"
+        self.disarm_code = "unknown"
+        self.tls_cert = self.tls_key = None
+        self.password_salt = secrets.token_bytes(32)
+        self.password_hash = b""
+        self.catalog = CATALOG
+        self.by_id = {item["entity_id"]: item for item in self.catalog}
+        if preview:
+            self.allowed_hosts = {"127.0.0.1:" + str(port), "localhost:" + str(port)}
+            self.allowed_networks = [ipaddress.ip_network("127.0.0.0/8")]
+            if lan_preview:
+                if not lan_address:
+                    raise ValueError("No s'ha pogut determinar la interfície LAN.")
+                self.allowed_hosts.add(authority(lan_address + ":" + str(port)))
+                self.allowed_networks.append(ipaddress.ip_network(lan_address + "/24", strict=False))
+            return
+        if not isinstance(options, dict):
+            raise ValueError("Les opcions han de ser un objecte JSON.")
+        known = {"panel_password", "allowed_hosts", "allowed_networks", "verified_actions", "room_assignments",
+                 "entity_ids",
+                 "alarm_modes", "alarm_arm_code", "alarm_disarm_code", "tls_certfile", "tls_keyfile"}
+        if set(options) - known:
+            raise ValueError("Hi ha opcions desconegudes; reviseu la configuració.")
+        password = options.get("panel_password", "")
+        if not isinstance(password, str) or not 12 <= len(password) <= 256:
+            raise ValueError("Configureu panel_password privat, de 12 a 256 caràcters.")
+        self.password_hash = self.password_digest(password)
+        self.allowed_hosts = {authority(v) for v in list_option(options, "allowed_hosts")}
+        if not self.allowed_hosts:
+            raise ValueError("Configureu allowed_hosts amb l'adreça exacta i el port del panell.")
+        self.allowed_networks = []
+        for value in list_option(options, "allowed_networks"):
+            try:
+                network = ipaddress.ip_network(value, strict=True)
+            except ValueError:
+                raise ValueError("allowed_networks conté un CIDR invàlid.") from None
+            if not any(network.version == allowed.version and network.subnet_of(allowed) for allowed in PRIVATE_NETS):
+                raise ValueError("allowed_networks només admet subxarxes privades explícites o loopback.")
+            self.allowed_networks.append(network)
+        if not self.allowed_networks:
+            raise ValueError("Configureu allowed_networks amb el CIDR real de la LAN.")
+        entity_ids = options.get("entity_ids")
+        if not isinstance(entity_ids, dict) or set(entity_ids) != set(SLOT_BY_ID):
+            raise ValueError("Configureu els 56 camps entity_ids a la configuració de l'aplicació.")
+        normalized_ids = {}
+        for slot, template in SLOT_BY_ID.items():
+            value = entity_ids.get(slot)
+            if not isinstance(value, str) or not re.fullmatch(template["domain"] + r"\.[a-z0-9_]+", value):
+                raise ValueError("El camp entity_ids." + slot + " ha de ser un ID de " + template["domain"] + ".")
+            normalized_ids[slot] = value
+        if len(set(normalized_ids.values())) != len(normalized_ids):
+            raise ValueError("Els camps entity_ids han de contenir IDs únics.")
+        self.catalog = catalog_for(normalized_ids)
+        self.by_id = {item["entity_id"]: item for item in self.catalog}
+        for item in list_option(options, "verified_actions"):
+            entity_id, separator, action = item.partition(":")
+            if not separator or not action_allowed(entity_id, action, self.by_id):
+                raise ValueError("verified_actions conté una entitat o acció no admesa.")
+            self.verified.add(item)
+        for item in list_option(options, "room_assignments"):
+            entity_id, separator, room = item.partition(":")
+            if not separator or entity_id not in self.by_id or room not in ROOM_IDS or entity_id in self.room_assignments:
+                raise ValueError("room_assignments conté una assignació no admesa o duplicada.")
+            self.room_assignments[entity_id] = room
+        self.alarm_modes = set(list_option(options, "alarm_modes"))
+        if not self.alarm_modes <= set(ARM_FEATURES):
+            raise ValueError("alarm_modes conté un mode no admès.")
+        self.arm_code = options.get("alarm_arm_code", "unknown")
+        self.disarm_code = options.get("alarm_disarm_code", "unknown")
+        if not isinstance(self.arm_code, str) or not isinstance(self.disarm_code, str) or self.arm_code not in {"required", "none", "unknown"} or self.disarm_code not in {"required", "none", "unknown"}:
+            raise ValueError("La política del codi d'alarma és invàlida.")
+        cert, key = options.get("tls_certfile", ""), options.get("tls_keyfile", "")
+        if not isinstance(cert, str) or not isinstance(key, str) or bool(cert) != bool(key):
+            raise ValueError("TLS requereix el certificat i la clau, o tots dos camps buits.")
+        if cert:
+            for filename in (cert, key):
+                if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", filename):
+                    raise ValueError("Els fitxers TLS han de ser noms simples dins de /ssl.")
+                if (Path("/ssl") / filename).resolve().parent != Path("/ssl").resolve():
+                    raise ValueError("Els fitxers TLS han de romandre dins de /ssl.")
+            self.tls_cert, self.tls_key = str(Path("/ssl") / cert), str(Path("/ssl") / key)
+
+    @property
+    def scheme(self):
+        return "https" if self.tls_cert else "http"
+
+    def password_digest(self, password):
+        return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), self.password_salt, 200000)
+
+    def check_password(self, password):
+        return isinstance(password, str) and 12 <= len(password) <= 256 and hmac.compare_digest(
+            self.password_hash, self.password_digest(password))
+
+    def allows_client(self, address):
+        try:
+            client = ipaddress.ip_address(address)
+            return any(client.version == network.version and client in network for network in self.allowed_networks)
+        except ValueError:
+            return False
+
+
+class NoRedirect(request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+class HAClient:
+    def __init__(self, token):
+        if not isinstance(token, str) or not token:
+            raise ValueError("Falta SUPERVISOR_TOKEN. Executeu el servei com a app de Home Assistant OS.")
+        self._token = token
+        self._opener = request.build_opener(request.ProxyHandler({}), NoRedirect())
+
+    def _request(self, path, payload=None):
+        data = None if payload is None else json.dumps(payload, allow_nan=False).encode("utf-8")
+        req = request.Request(UPSTREAM + path, data=data, headers={
+            "Authorization": "Bearer " + self._token,
+            "Content-Type": "application/json", "Accept": "application/json"})
+        try:
+            with self._opener.open(req, timeout=4) as response:
+                raw = response.read(4 * 1024 * 1024 + 1)
+                if len(raw) > 4 * 1024 * 1024:
+                    raise PublicError("La resposta de Home Assistant supera el límit admès.", 502)
+                return json.loads(raw.decode("utf-8"))
+        except error.HTTPError as exc:
+            status = exc.code
+            exc.close()
+            if status in (401, 403):
+                raise PublicError("Home Assistant ha denegat l'accés. Reviseu el permís de l'app.", 502) from None
+            if payload is not None:
+                raise PublicError("Home Assistant ha rebutjat l'ordre. Comproveu l'estat abans de repetir-la.", 502) from None
+            raise PublicError("No s'ha pogut llegir Home Assistant.", 502) from None
+        except (error.URLError, TimeoutError, OSError, ValueError, UnicodeError):
+            message = ("No es pot confirmar l'ordre. Comproveu l'estat a Home Assistant abans de repetir-la."
+                       if payload is not None else "No hi ha connexió amb Home Assistant.")
+            raise PublicError(message, 502) from None
+
+    def snapshot(self, by_id=None):
+        # Independent reads run together so a failing upstream does not incur
+        # three consecutive network timeouts on an old browser.
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = [pool.submit(self._request, path) for path in ("/states", "/services", "/config")]
+            states, services, config = [future.result() for future in futures]
+        if not isinstance(states, list) or not isinstance(services, list) or not isinstance(config, dict):
+            raise PublicError("La resposta de Home Assistant no té el format esperat.", 502)
+        entity_map = by_id if by_id is not None else BY_ID
+        indexed = {item["entity_id"]: item for item in states if isinstance(item, dict)
+                   and isinstance(item.get("entity_id"), str) and item["entity_id"] in entity_map}
+        available = {}
+        for group in services:
+            if isinstance(group, dict) and isinstance(group.get("domain"), str) and isinstance(group.get("services"), dict):
+                available[group["domain"]] = group["services"]
+        version = config.get("version")
+        return indexed, available, version if short_string(version, 60) else None
+
+    def call(self, domain, service, payload):
+        self._request("/services/" + domain + "/" + service, payload)
+
+
+def filtered_attributes(domain, raw):
+    """Never pass arbitrary HA attributes (tokens, pictures, URLs, codes) through."""
+    result = {}
+    if not isinstance(raw, dict):
+        return result
+    for key in ATTRS.get(domain, set()):
+        value = raw.get(key)
+        if key not in raw:
+            continue
+        numeric = {"supported_features", "brightness", "color_temp_kelvin", "min_color_temp_kelvin",
+                   "max_color_temp_kelvin", "current_temperature", "percentage", "percentage_step", "volume_level"}
+        boolean = {"code_arm_required", "is_volume_muted"}
+        lists = {"supported_color_modes", "operation_list", "lights"}
+        if value is None:
+            result[key] = value
+        elif key in numeric and number(value):
+            result[key] = value
+        elif key in boolean and isinstance(value, bool):
+            result[key] = value
+        elif key not in numeric | boolean | lists and short_string(value, 256):
+            result[key] = value
+        elif key in lists and isinstance(value, list) and len(value) <= 128 and all(short_string(v, 160) for v in value):
+            if key == "lights":
+                result[key] = [v for v in value if re.fullmatch(r"light\.[a-z0-9_]+", v)]
+            else:
+                result[key] = value[:]
+    return result
+
+
+def service_exists(services, domain, service):
+    return isinstance(services.get(domain), dict) and isinstance(services[domain].get(service), dict)
+
+
+def service_field(services, domain, service, field):
+    """Services may expose additional_fields nested groups in recent HA versions."""
+    if not service_exists(services, domain, service):
+        return False
+
+    def search(fields, depth=0):
+        if not isinstance(fields, dict) or depth > 5:
+            return False
+        if field in fields:
+            return True
+        return any(isinstance(value, dict) and search(value.get("fields"), depth + 1) for value in fields.values())
+
+    return search(services[domain][service].get("fields"))
+
+
+def controls_for(item, state, attrs, services, settings):
+    controls = []
+    domain, entity_id = item["domain"], item["entity_id"]
+    features = attrs.get("supported_features", 0)
+    features = features if isinstance(features, int) and not isinstance(features, bool) and features >= 0 else 0
+
+    def add(action, label, kind="button", service=None, field=None, blocker=None, **extra):
+        service = service or action
+        if not service_exists(services, domain, service) or (field and not service_field(services, domain, service, field)):
+            return
+        reason = blocker
+        if not reason and entity_id + ":" + action not in settings.verified:
+            reason = "Pendent de prova real i d'autorització a verified_actions."
+        controls.append(dict(action=action, label=label, kind=kind, enabled=not bool(reason), reason=reason, **extra))
+
+    if domain == "light":
+        if state not in {"on", "off"}:
+            return controls
+        add("turn_on", "Encendre")
+        add("turn_off", "Apagar")
+        modes = attrs.get("supported_color_modes")
+        modes = set(modes) if isinstance(modes, list) and all(isinstance(v, str) for v in modes) else set()
+        if modes & {"brightness", "color_temp", "hs", "xy", "rgb", "rgbw", "rgbww"}:
+            value = attrs.get("brightness")
+            add("brightness", "Brillantor", "range", "turn_on", "brightness", min=1, max=255, step=1,
+                value=value if number(value) and 1 <= value <= 255 else None)
+        low, high = attrs.get("min_color_temp_kelvin"), attrs.get("max_color_temp_kelvin")
+        if "color_temp" in modes and number(low) and number(high) and 500 <= low < high <= 40000:
+            value = attrs.get("color_temp_kelvin")
+            add("color_temp_kelvin", "Temperatura de color (K)", "range", "turn_on", "color_temp_kelvin",
+                min=math.ceil(low), max=math.floor(high), step=1,
+                value=value if number(value) and low <= value <= high else None)
+    elif domain in {"switch", "input_boolean"} and item["category"] == "adaptive" and state in {"on", "off"}:
+        add("turn_on", "Activar")
+        add("turn_off", "Desactivar")
+    elif domain == "scene":
+        add("turn_on", "Activar escena")
+    elif domain == "alarm_control_panel":
+        if state not in {"disarmed", "armed_home", "armed_away", "armed_night", "armed_vacation",
+                         "armed_custom_bypass", "pending", "arming", "disarming", "triggered"}:
+            return controls
+        for action, (feature, label) in ARM_FEATURES.items():
+            if features & feature:
+                blocker = None
+                if action not in settings.alarm_modes:
+                    blocker = "Cal confirmar aquest mode a alarm_modes."
+                elif settings.arm_code == "unknown":
+                    blocker = "Cal confirmar si Alarmo exigeix codi per armar."
+                elif attrs.get("code_arm_required") is True and settings.arm_code != "required":
+                    blocker = "Alarmo exigeix codi: corregiu alarm_arm_code."
+                elif settings.arm_code == "none" and attrs.get("code_arm_required") is not False:
+                    blocker = "L'atribut code_arm_required no confirma armament sense codi."
+                if settings.arm_code == "required" and not service_field(services, domain, action, "code"):
+                    blocker = "El servei no publica el camp de codi."
+                add(action, label, "alarm", blocker=blocker, requires_code=settings.arm_code == "required")
+        blocker = None
+        if settings.disarm_code == "unknown":
+            blocker = "Cal confirmar si Alarmo exigeix codi per desarmar."
+        elif settings.disarm_code == "none" and attrs.get("code_format") is not None:
+            blocker = "Alarmo publica un format de codi: confirmeu la política abans de desarmar."
+        elif settings.disarm_code == "required" and not service_field(services, domain, "alarm_disarm", "code"):
+            blocker = "El servei no publica el camp de codi."
+        add("alarm_disarm", "Desarmar", "alarm", blocker=blocker, requires_code=settings.disarm_code == "required")
+    elif domain == "water_heater":
+        modes = attrs.get("operation_list")
+        if features & 2 and isinstance(modes, list) and modes and all(short_string(v, 100) and v for v in modes):
+            add("set_operation_mode", "Mode d'operació", "select", field="operation_mode",
+                options=list(dict.fromkeys(modes)), value=attrs.get("operation_mode"))
+    elif domain == "fan" and state in {"on", "off"}:
+        if features & 32:
+            add("turn_on", "Encendre")
+        if features & 16:
+            add("turn_off", "Apagar")
+        if features & 1:
+            value, step = attrs.get("percentage"), attrs.get("percentage_step")
+            add("set_percentage", "Velocitat (%)", "range", field="percentage", min=0, max=100,
+                step=step if number(step) and 0 < step <= 100 else 1,
+                value=value if number(value) and 0 <= value <= 100 else None)
+    elif domain == "media_player":
+        if state not in {"off", "on", "idle", "playing", "paused", "buffering", "standby"}:
+            return controls
+        for action, feature, label in [("turn_on", 128, "Encendre"), ("turn_off", 256, "Apagar"),
+                                       ("media_play", 16384, "Reproduir"), ("media_pause", 1, "Pausa")]:
+            if features & feature:
+                add(action, label)
+        if features & 4:
+            value = attrs.get("volume_level")
+            add("volume_set", "Volum", "range", field="volume_level", min=0, max=1, step=0.01,
+                value=value if number(value) and 0 <= value <= 1 else None)
+    return controls
+
+
+def entities_for(states, services, settings, connected):
+    entities = []
+    for item in settings.catalog:
+        entity = dict(item, room=settings.room_assignments.get(item["entity_id"]), state=None,
+                      status="pending", attributes={}, controls=[])
+        if connected:
+            raw = states.get(item["entity_id"])
+            if raw is None:
+                entity["status"] = "missing"
+            else:
+                value = raw.get("state")
+                entity["state"] = value if short_string(value, 256) else None
+                entity["status"] = value if value in ("unavailable", "unknown") else ("ok" if entity["state"] is not None else "unknown")
+                if item["slot"] == "water_showers" and entity["status"] == "ok":
+                    try:
+                        valid_showers = math.isfinite(float(value)) and float(value) >= 0
+                    except (ValueError, TypeError):
+                        valid_showers = False
+                    if not valid_showers:
+                        entity["state"], entity["status"] = None, "unknown"
+                entity["attributes"] = filtered_attributes(item["domain"], raw.get("attributes"))
+                if entity["status"] == "ok":
+                    entity["controls"] = controls_for(item, value, entity["attributes"], services, settings)
+        entities.append(entity)
+    return entities
+
+
+def action_payload(entity, body):
+    if not isinstance(body, dict) or set(body) - {"entity_id", "action", "value", "code"}:
+        raise PublicError("La petició conté camps no admesos.")
+    action = body.get("action")
+    control = next((c for c in entity["controls"] if c["action"] == action), None)
+    if not control or not control["enabled"]:
+        raise PublicError("Control no verificat o no disponible en l'estat actual.", 403)
+    payload = {"entity_id": entity["entity_id"]}
+    service = action
+    if control["kind"] == "range":
+        value = body.get("value")
+        if not number(value) or not control["min"] <= value <= control["max"]:
+            raise PublicError("El valor és fora dels límits publicats per l'entitat.")
+        if action in {"brightness", "color_temp_kelvin", "set_percentage"} and value != int(value):
+            raise PublicError("Aquest control requereix un valor enter.")
+        field = {"brightness": "brightness", "color_temp_kelvin": "color_temp_kelvin",
+                 "set_percentage": "percentage", "volume_set": "volume_level"}[action]
+        payload[field] = value
+        if entity["domain"] == "light":
+            service = "turn_on"
+    elif control["kind"] == "select":
+        if not isinstance(body.get("value"), str) or body["value"] not in control["options"]:
+            raise PublicError("El mode no figura entre les opcions actuals de l'entitat.")
+        payload["operation_mode"] = body["value"]
+    elif "value" in body:
+        raise PublicError("Aquesta acció no admet un valor addicional.")
+    if control["kind"] == "alarm":
+        if control.get("requires_code"):
+            code = body.get("code")
+            if not short_string(code, 64) or not code:
+                raise PublicError("Introduïu el codi per a aquesta ordre.")
+            if entity["attributes"].get("code_format") == "number" and not re.fullmatch(r"[0-9]+", code):
+                raise PublicError("El codi ha de contenir només dígits.")
+            payload["code"] = code
+        elif "code" in body:
+            raise PublicError("Aquesta política no admet l'enviament d'un codi.")
+    elif "code" in body:
+        raise PublicError("Aquest control no admet un codi.")
+    return service, payload
+
+
+class App:
+    def __init__(self, settings, client=None):
+        self.settings, self.client = settings, client
+        self.sessions = {}
+        self.attempts = {}
+        self.lock = threading.Lock()
+        self.action_lock = threading.Lock()
+
+    def rate_limit(self, address, kind, maximum, period):
+        now = time.monotonic()
+        key = (address, kind)
+        with self.lock:
+            for old_key in list(self.attempts):
+                if not self.attempts[old_key] or now - self.attempts[old_key][-1] > 300:
+                    del self.attempts[old_key]
+            values = [v for v in self.attempts.get(key, []) if now - v < period]
+            if len(values) >= maximum or (key not in self.attempts and len(self.attempts) >= 512):
+                raise PublicError("Massa intents. Espereu una estona i torneu-ho a provar.", 429)
+            self.attempts[key] = values + [now]
+
+    def new_session(self, address):
+        now = time.monotonic()
+        token = secrets.token_urlsafe(32)
+        session = {"csrf": secrets.token_urlsafe(32), "expires": now + SESSION_SECONDS, "address": address}
+        with self.lock:
+            self.sessions = {k: v for k, v in self.sessions.items() if v["expires"] > now}
+            if len(self.sessions) >= 32:
+                oldest = min(self.sessions, key=lambda k: self.sessions[k]["expires"])
+                del self.sessions[oldest]
+            self.sessions[token] = session
+        return token, session
+
+    def get_session(self, token, address):
+        with self.lock:
+            session = self.sessions.get(token)
+            if session and session["expires"] <= time.monotonic():
+                del self.sessions[token]
+                return None
+            if session and session["address"] == address:
+                return dict(session)
+        return None
+
+    def state(self, audit=False):
+        states, services, version = {}, {}, None
+        connected = False
+        failure = "Previsualització local: sense connexió amb Home Assistant." if self.settings.preview else None
+        if not self.settings.preview:
+            try:
+                states, services, version = self.client.snapshot(self.settings.by_id)
+                connected = True
+            except PublicError as exc:
+                failure = exc.message
+        result = {"connected": connected, "preview": self.settings.preview,
+                  "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat() if connected else None,
+                  "error": failure, "version": version, "rooms": ROOMS,
+                  "transport": self.settings.scheme,
+                  "entities": entities_for(states, services, self.settings, connected)}
+        if audit:
+            result["verification"] = {
+                "rule": "Atributs actuals + servei disponible + prova real autoritzada a verified_actions.",
+                "alarm_arm_code": self.settings.arm_code,
+                "alarm_disarm_code": self.settings.disarm_code,
+                "alarm_modes": sorted(self.settings.alarm_modes),
+                "verified_actions": sorted(self.settings.verified),
+                "room_assignments": dict(self.settings.room_assignments),
+                "note": "Les capacitats detectades no acrediten una prova física; no es verifica cap acció automàticament."}
+        return result
+
+    def action(self, body):
+        if self.settings.preview:
+            raise PublicError("La previsualització és només de lectura.", 403)
+        if not isinstance(body, dict) or not isinstance(body.get("entity_id"), str) or not isinstance(body.get("action"), str):
+            raise PublicError("Falten l'entitat i l'acció.")
+        if not action_allowed(body["entity_id"], body["action"], self.settings.by_id):
+            raise PublicError("Entitat o acció fora de la llista permesa.", 403)
+        if set(body) - {"entity_id", "action", "value", "code"}:
+            raise PublicError("La petició conté camps no admesos.")
+        with self.action_lock:
+            # Read immediately before the call: a browser snapshot never authorizes a write.
+            states, services, _ = self.client.snapshot(self.settings.by_id)
+            entities = entities_for(states, services, self.settings, True)
+            entity = next(item for item in entities if item["entity_id"] == body["entity_id"])
+            service, payload = action_payload(entity, body)
+            try:
+                self.client.call(entity["domain"], service, payload)
+            finally:
+                # Do not retain the PIN in application state, logs or a queue.
+                payload.pop("code", None)
+                body.pop("code", None)
+        return {"ok": True, "message": "Ordre enviada; pendent de confirmar estat."}
+
+
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+    request_queue_size = 16
+    allow_reuse_address = True
+
+    def __init__(self, address, app):
+        self.app = app
+        self.tls_context = None
+        self.slots = threading.BoundedSemaphore(24)
+        super().__init__(address, Handler)
+
+    def process_request(self, request_socket, client_address):
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request_socket)
+            return
+        try:
+            super().process_request(request_socket, client_address)
+        except Exception:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request_socket, client_address):
+        try:
+            if self.tls_context:
+                # TLS handshakes are bounded and occur in a worker, never on the
+                # accept loop (a stalled client cannot block every connection).
+                request_socket.settimeout(8)
+                request_socket = self.tls_context.wrap_socket(request_socket, server_side=True)
+            super().process_request_thread(request_socket, client_address)
+        except OSError:
+            self.shutdown_request(request_socket)
+        finally:
+            self.slots.release()
+
+    def handle_error(self, request_socket, client_address):
+        # The default implementation prints tracebacks, potentially including input.
+        pass
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "GlassRooms"
+    sys_version = ""
+    protocol_version = "HTTP/1.0"
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(10)
+
+    def log_message(self, format_string, *args):
+        pass
+
+    def send_error(self, code, message=None, explain=None):
+        self.reply({"error": "Petició HTTP no admesa."}, code)
+
+    @property
+    def app(self):
+        return self.server.app
+
+    def reply(self, data, status=200, content_type="application/json; charset=utf-8", cookie=None):
+        payload = data if isinstance(data, bytes) else json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "same-origin")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+        self.send_header("Connection", "close")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(payload)
+        self.close_connection = True
+
+    def guard(self, writing=False):
+        if not self.app.settings.allows_client(self.client_address[0]):
+            raise PublicError("Accés restringit a la xarxa local configurada.", 403)
+        hosts = self.headers.get_all("Host", [])
+        try:
+            valid_host = len(hosts) == 1 and authority(hosts[0]) in self.app.settings.allowed_hosts
+        except ValueError:
+            valid_host = False
+        if not valid_host:
+            raise PublicError("Host no autoritzat. Reviseu l'adreça i allowed_hosts.", 403)
+        if writing:
+            origins = self.headers.get_all("Origin", [])
+            refers = self.headers.get_all("Referer", [])
+            expected = self.app.settings.scheme + "://" + hosts[0].lower()
+            if origins:
+                valid_origin = len(origins) == 1 and origins[0].lower() == expected
+            else:
+                valid_origin = False
+                if len(refers) == 1:
+                    try:
+                        ref = parse.urlsplit(refers[0])
+                        valid_origin = not ref.username and not ref.password and ref.scheme + "://" + ref.netloc.lower() == expected
+                    except ValueError:
+                        pass
+            if not valid_origin:
+                raise PublicError("Origen no autoritzat. Obriu el panell des de la seva adreça local.", 403)
+        if parse.urlsplit(self.path).scheme or not self.path.startswith("/") or self.path.startswith("//"):
+            raise PublicError("Ruta no admesa.", 400)
+
+    def session(self, required=True):
+        cookies = http.cookies.SimpleCookie()
+        try:
+            cookies.load(self.headers.get("Cookie", ""))
+        except http.cookies.CookieError:
+            cookies = http.cookies.SimpleCookie()
+        token = cookies[COOKIE_NAME].value if COOKIE_NAME in cookies else ""
+        session = self.app.get_session(token, self.client_address[0])
+        if required and not session:
+            raise PublicError("Cal iniciar sessió al panell.", 401)
+        return token, session
+
+    def cookie(self, token, expire=False):
+        value = COOKIE_NAME + "=" + token + "; Path=/api; HttpOnly; SameSite=Strict; Max-Age=" + ("0" if expire else str(SESSION_SECONDS))
+        if self.app.settings.tls_cert:
+            value += "; Secure"
+        return value
+
+    def read_json(self):
+        if self.headers.get_content_type() != "application/json":
+            raise PublicError("La petició ha de ser JSON.", 415)
+        lengths = self.headers.get_all("Content-Length", [])
+        if len(lengths) != 1 or self.headers.get("Transfer-Encoding"):
+            raise PublicError("Longitud de petició no admesa.", 400)
+        try:
+            size = int(lengths[0])
+        except ValueError:
+            raise PublicError("Longitud de petició no admesa.", 400) from None
+        if size < 2 or size > MAX_BODY:
+            raise PublicError("La petició supera el límit admès.", 413)
+        try:
+            raw = self.rfile.read(size)
+            if len(raw) != size:
+                raise ValueError()
+            body = json.loads(raw.decode("utf-8"), parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+        except (ValueError, UnicodeError):
+            raise PublicError("El JSON no és vàlid.", 400) from None
+        if not isinstance(body, dict):
+            raise PublicError("El JSON ha de ser un objecte.", 400)
+        return body
+
+    def dispatch_get(self):
+        self.guard()
+        path = parse.urlsplit(self.path).path
+        if path == "/api/session":
+            _, session = self.session(False)
+            result = {"authenticated": bool(session), "preview": self.app.settings.preview}
+            if session:
+                result["csrf"] = session["csrf"]
+            self.reply(result)
+            return
+        if path in {"/api/state", "/api/audit"}:
+            if not self.app.settings.preview:
+                self.session()
+            self.app.rate_limit(self.client_address[0], "read", 90, 60)
+            self.reply(self.app.state(audit=path == "/api/audit"))
+            return
+        files = {"/": ("index.html", "text/html; charset=utf-8"),
+                 "/index.html": ("index.html", "text/html; charset=utf-8"),
+                 "/app.js": ("app.js", "application/javascript; charset=utf-8"),
+                 "/style.css": ("style.css", "text/css; charset=utf-8"),
+                 "/boot.js": ("boot.js", "application/javascript; charset=utf-8"),
+                 "/diagnostics.html": ("diagnostics.html", "text/html; charset=utf-8"),
+                 "/diagnostics.js": ("diagnostics.js", "application/javascript; charset=utf-8")}
+        files.update({"/assets/" + room + ".svg": ("assets/" + room + ".svg", "image/svg+xml") for room in ROOM_IDS})
+        if path not in files:
+            raise PublicError("Recurs no trobat.", 404)
+        filename, kind = files[path]
+        target = ROOT / filename
+        # Whitelist plus resolution check prevents a symlink from exposing /data or /ssl.
+        if not target.resolve().is_relative_to(ROOT.resolve()) or not target.is_file():
+            raise PublicError("Recurs no trobat.", 404)
+        self.reply(target.read_bytes(), content_type=kind)
+
+    def dispatch_post(self):
+        self.guard(writing=True)
+        if self.app.settings.preview:
+            raise PublicError("La previsualització és només de lectura.", 403)
+        path = parse.urlsplit(self.path).path
+        if path not in {"/api/login", "/api/logout", "/api/action"}:
+            raise PublicError("Recurs no trobat.", 404)
+        if path == "/api/login":
+            self.app.rate_limit(self.client_address[0], "login", 5, 60)
+            body = self.read_json()
+            if set(body) != {"password"} or not self.app.settings.check_password(body.get("password")):
+                raise PublicError("Contrasenya incorrecta.", 401)
+            previous, _ = self.session(False)
+            with self.app.lock:
+                self.app.sessions.pop(previous, None)
+            token, session = self.app.new_session(self.client_address[0])
+            self.reply({"authenticated": True, "csrf": session["csrf"]}, cookie=self.cookie(token))
+            return
+        token, session = self.session()
+        csrf = self.headers.get_all("X-CSRF-Token", [])
+        if len(csrf) != 1 or not hmac.compare_digest(csrf[0], session["csrf"]):
+            raise PublicError("La sessió ha canviat. Torneu a carregar el panell.", 403)
+        body = self.read_json()
+        if path == "/api/logout":
+            if body:
+                raise PublicError("La sortida de sessió no admet camps.")
+            with self.app.lock:
+                self.app.sessions.pop(token, None)
+            self.reply({"authenticated": False}, cookie=self.cookie("", expire=True))
+            return
+        self.app.rate_limit(self.client_address[0], "action", 30, 60)
+        self.reply(self.app.action(body))
+
+    def do_GET(self):
+        self.execute(self.dispatch_get)
+
+    def do_HEAD(self):
+        self.execute(self.dispatch_get)
+
+    def do_POST(self):
+        self.execute(self.dispatch_post)
+
+    def execute(self, operation):
+        try:
+            operation()
+        except PublicError as exc:
+            self.reply({"error": exc.message}, exc.status)
+        except (BrokenPipeError, ConnectionResetError, socket.timeout):
+            self.close_connection = True
+        except Exception:
+            # Generic message deliberately excludes exception/input/upstream details.
+            self.reply({"error": "Error intern; cap resultat no es pot confirmar. Reviseu l'estat abans de repetir."}, 500)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Glass Rooms · panell local de Home Assistant")
+    parser.add_argument("--preview", action="store_true", help="Només loopback, sense dades ni accions reals")
+    parser.add_argument("--lan-preview", action="store_true", help="Previsualització només lectura accessible des de la LAN privada")
+    parser.add_argument("--lan-address", help="Adreça IPv4 LAN del servidor per a --lan-preview")
+    parser.add_argument("--port", type=int, default=8099)
+    args = parser.parse_args()
+    if args.lan_preview:
+        args.preview = True
+    if not 1 <= args.port <= 65535:
+        parser.error("El port ha d'estar entre 1 i 65535.")
+    try:
+        if args.preview:
+            lan_address = args.lan_address
+            if args.lan_preview:
+                # Select the IPv4 address used for the default route on macOS/Linux.
+                if not lan_address:
+                    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    try:
+                        probe.connect(("192.0.2.1", 80))
+                        lan_address = probe.getsockname()[0]
+                    finally:
+                        probe.close()
+            settings = Settings({}, preview=True, port=args.port, lan_preview=args.lan_preview,
+                                lan_address=lan_address)
+            client = None
+        else:
+            with open("/data/options.json", "r", encoding="utf-8") as stream:
+                raw = stream.read(128 * 1024 + 1)
+                if len(raw) > 128 * 1024:
+                    raise ValueError("La configuració supera el límit admès.")
+                options = json.loads(raw)
+            settings = Settings(options)
+            options.clear()
+            raw = ""
+            client = HAClient(os.environ.get("SUPERVISOR_TOKEN"))
+        server = Server(("0.0.0.0" if args.lan_preview or not args.preview else "127.0.0.1", args.port), App(settings, client))
+        if settings.tls_cert:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            context.load_cert_chain(settings.tls_cert, settings.tls_key)
+            server.tls_context = context
+    except (OSError, ValueError, ssl.SSLError) as exc:
+        # Configuration errors from our code contain only fixed diagnostics; JSON and
+        # SSL/parser exceptions can include paths/content, so keep them generic.
+        message = str(exc) if type(exc) is ValueError and not isinstance(exc, json.JSONDecodeError) else "No s'ha pogut carregar la configuració, obrir el port o iniciar TLS."
+        print("Glass Rooms: " + message, flush=True)
+        return 1
+    print("Glass Rooms iniciat: " + ("previsualització local, només lectura." if args.preview else "accés restringit a la LAN configurada."), flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
