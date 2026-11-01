@@ -72,7 +72,6 @@
   }
   function byCategory(category) { var result=[],i; for(i=0;i<state.entities.length;i++) { if(state.entities[i].category===category) { result.push(state.entities[i]); } } return result; }
   function byRoom(room) { var result=[],i; for(i=0;i<state.entities.length;i++) { if(state.entities[i].room===room) { result.push(state.entities[i]); } } return result; }
-  function byId(id) { var i; for(i=0;i<state.entities.length;i++) { if(state.entities[i].entity_id===id) { return state.entities[i]; } } return null; }
   function stateText(entity) {
     if(!state.connected || !entity || entity.status==='pending') { return 'Pendent de connexió'; }
     if(entity.status==='missing') { return 'No trobada a Home Assistant'; }
@@ -112,15 +111,14 @@
   }
   function summaryValue(category) {
     if(!state.connected) { return '—'; }
-    if(category==='security') { return stateText(byId('alarm_control_panel.alarmo')); }
-    if(category==='water') { var heater=byId('water_heater.escalfador'), t=heater&&heater.attributes?heater.attributes.current_temperature:null; return heater&&heater.status==='ok'&&safeNumber(t)?t+' '+(heater.attributes.temperature_unit||'°'):'Lectura pendent'; }
     var items=byCategory(category), valid=0,i; for(i=0;i<items.length;i++) { if(items[i].status==='ok') { valid++; } }
     return valid+' / '+items.length+' amb estat';
   }
   function renderOverview(parent) {
     var label=el('h2','section-label','D’UN COP D’ULL'); label.appendChild(el('span','', 'Només lectures reals')); parent.appendChild(label);
     var grid=el('div','summary-grid');
-    [{id:'lights',name:'Il·luminació',icon:'light',note:'Grups existents i llums individuals'}, {id:'security',name:'Seguretat',icon:'shield',note:'Alarma, obertures i detecció'}, {id:'water',name:'Aigua calenta',icon:'water',note:'Escalfador i dutxes estimades'}, {id:'media',name:'Música i televisió',icon:'media',note:'Reproductors de la sala'}, {id:'fans',name:'Ventiladors',icon:'fan',note:'Un aire més agradable'}, {id:'adaptive',name:'Adaptive Lighting',icon:'sun',note:'Adaptació i mode de son'}].forEach(function(item) {
+    [{id:'lights',name:'Il·luminació',icon:'light',note:'Llums configurats'}, {id:'security',name:'Seguretat',icon:'shield',note:'Entitats de seguretat configurades'}, {id:'water',name:'Aigua calenta',icon:'water',note:'Entitats d’aigua configurades'}, {id:'media',name:'Música i televisió',icon:'media',note:'Reproductors configurats'}, {id:'fans',name:'Ventiladors',icon:'fan',note:'Ventiladors configurats'}, {id:'switches',name:'Interruptors',icon:'light',note:'Interruptors configurats'}, {id:'scenes',name:'Escenes',icon:'spark',note:'Escenes configurades'}, {id:'other',name:'Altres dispositius',icon:'overview',note:'Altres entitats configurades'}].forEach(function(item) {
+      if(!byCategory(item.id).length) { return; }
       var wrap=el('div','summary-wrap'), card=button('','summary-card',function() { openCategory(item.id,item.name); });
       card.appendChild(icon(item.icon)); card.appendChild(el('h3','',item.name)); card.appendChild(el('span','summary-value',summaryValue(item.id))); card.appendChild(el('span','summary-note',item.note)); wrap.appendChild(card); grid.appendChild(wrap);
     }); parent.appendChild(grid);
@@ -164,14 +162,8 @@
   }
   function openCategory(category,title) {
     var parent=openModal(title,'A CASA','category',category), items=category==='all'?state.entities:byCategory(category);
-    if(category==='lights') { parent.appendChild(el('p','info-box','Els grups són els que ja existeixen a Home Assistant. No se sumen les bombetes ni se’n dedueixen els membres.')); }
-    if(category==='security') { parent.appendChild(el('p','info-box','Els sensors es mostren de manera independent. La seva presència no confirma que formin part de l’alarma.')); }
-    if(category==='adaptive') { parent.appendChild(el('p','info-box','Pendent de confirmar quines llums afecta cada adaptació. El mode circadià és un control independent.')); }
-    if(category==='water') { parent.appendChild(el('p','info-box','Les dutxes són una estimació del sensor. No es modifiquen la temperatura objectiu ni els ajustos de seguretat.')); }
-    if(category==='media') { parent.appendChild(el('p','info-box','La identitat Sonos del reproductor està pendent de confirmar.')); }
     if(!items.length) { parent.appendChild(el('p','empty-state','Pendent de carregar l’inventari. Comprova la connexió amb el panell.')); }
     renderEntities(parent,items);
-    if(category==='scenes') { parent.appendChild(button('Adaptive Lighting','outline-button',function() { openCategory('adaptive','Adaptive Lighting'); })); }
   }
   function displayAttributes(parent,entity) {
     var a=entity.attributes||{}, parts=[];

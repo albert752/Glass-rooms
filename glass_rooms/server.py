@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Glass Rooms: fixed inventory, fail-closed controls and a private HA API bridge.
+"""Glass Rooms: config-driven inventory, fail-closed controls and a private HA API bridge.
 
 Only Python's standard library is required. Never log requests, headers, bodies,
 upstream responses, exception text or credentials. The Supervisor token stays
@@ -27,9 +27,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib import error, parse, request
 
 try:
-    from .catalog import BY_ID, CATALOG, ROOMS, ROOM_IDS, SLOT_BY_ID, catalog_for
+    from .catalog import BY_ID, CATALOG, ROOMS, ROOM_IDS, catalog_for
 except ImportError:
-    from catalog import BY_ID, CATALOG, ROOMS, ROOM_IDS, SLOT_BY_ID, catalog_for
+    from catalog import BY_ID, CATALOG, ROOMS, ROOM_IDS, catalog_for
 
 ROOT = Path(__file__).resolve().parent / "www"
 UPSTREAM = "http://supervisor/core/api"
@@ -53,19 +53,19 @@ ACTION_NAMES = {
     "media_player": {"turn_on", "turn_off", "media_play", "media_pause", "volume_set"},
 }
 ATTRS = {
-    "light": {"supported_features", "supported_color_modes", "brightness", "color_mode",
+    "light": {"supported_features", "supported_color_modes", "brightness", "color_mode", "friendly_name",
               "color_temp_kelvin", "min_color_temp_kelvin", "max_color_temp_kelvin"},
-    "switch": {"lights"},
-    "input_boolean": set(),
-    "scene": set(),
-    "alarm_control_panel": {"supported_features", "code_format", "code_arm_required"},
-    "sensor": {"unit_of_measurement", "device_class"},
-    "binary_sensor": {"device_class"},
-    "script": set(),
-    "water_heater": {"supported_features", "current_temperature", "temperature_unit",
+    "switch": {"lights", "friendly_name"},
+    "input_boolean": {"friendly_name"},
+    "scene": {"friendly_name"},
+    "alarm_control_panel": {"supported_features", "code_format", "code_arm_required", "friendly_name"},
+    "sensor": {"unit_of_measurement", "device_class", "friendly_name"},
+    "binary_sensor": {"device_class", "friendly_name"},
+    "script": {"friendly_name"},
+    "water_heater": {"supported_features", "current_temperature", "temperature_unit", "friendly_name",
                      "operation_mode", "operation_list"},
-    "fan": {"supported_features", "percentage", "percentage_step"},
-    "media_player": {"supported_features", "volume_level", "is_volume_muted", "media_title", "media_artist"},
+    "fan": {"supported_features", "percentage", "percentage_step", "friendly_name"},
+    "media_player": {"supported_features", "volume_level", "is_volume_muted", "media_title", "media_artist", "friendly_name"},
 }
 PRIVATE_NETS = [ipaddress.ip_network(value) for value in (
     "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "fc00::/7", "::1/128")]
@@ -121,8 +121,7 @@ def list_option(options, name):
 
 def action_allowed(entity_id, action, by_id=None):
     item = (by_id if by_id is not None else BY_ID).get(entity_id)
-    return bool(item and action in ACTION_NAMES.get(item["domain"], set())
-                and not (item["category"] == "water" and item["domain"] == "switch"))
+    return bool(item and isinstance(action, str) and re.fullmatch(r"[a-z][a-z0-9_]*", action))
 
 
 class Settings:
@@ -150,7 +149,7 @@ class Settings:
         if not isinstance(options, dict):
             raise ValueError("Les opcions han de ser un objecte JSON.")
         known = {"panel_password", "allowed_hosts", "allowed_networks", "verified_actions", "room_assignments",
-                 "entity_ids",
+                 "light_entity_ids", "entity_ids",
                  "alarm_modes", "alarm_arm_code", "alarm_disarm_code", "tls_certfile", "tls_keyfile"}
         if set(options) - known:
             raise ValueError("Hi ha opcions desconegudes; reviseu la configuració.")
@@ -172,18 +171,21 @@ class Settings:
             self.allowed_networks.append(network)
         if not self.allowed_networks:
             raise ValueError("Configureu allowed_networks amb el CIDR real de la LAN.")
-        entity_ids = options.get("entity_ids")
-        if not isinstance(entity_ids, dict) or set(entity_ids) != set(SLOT_BY_ID):
-            raise ValueError("Configureu els 56 camps entity_ids a la configuració de l'aplicació.")
-        normalized_ids = {}
-        for slot, template in SLOT_BY_ID.items():
-            value = entity_ids.get(slot)
-            if not isinstance(value, str) or not re.fullmatch(template["domain"] + r"\.[a-z0-9_]+", value):
-                raise ValueError("El camp entity_ids." + slot + " ha de ser un ID de " + template["domain"] + ".")
-            normalized_ids[slot] = value
-        if len(set(normalized_ids.values())) != len(normalized_ids):
-            raise ValueError("Els camps entity_ids han de contenir IDs únics.")
-        self.catalog = catalog_for(normalized_ids)
+        light_ids = list_option(options, "light_entity_ids")
+        entity_ids = list_option(options, "entity_ids")
+        if len(light_ids) + len(entity_ids) > 256:
+            raise ValueError("La configuració pot incloure com a màxim 256 entitats.")
+        if any(not re.fullmatch(r"light\.[a-z0-9_]+", value) for value in light_ids):
+            raise ValueError("light_entity_ids només admet IDs del domini light.")
+        if any(not re.fullmatch(r"[a-z_]+\.[a-z0-9_]+", value) or value.split(".", 1)[0] == "light"
+               for value in entity_ids):
+            raise ValueError("entity_ids admet dominis vàlids excepte light; posa els llums a light_entity_ids.")
+        all_ids = light_ids + entity_ids
+        if len(set(all_ids)) != len(all_ids):
+            raise ValueError("Els IDs configurats han de ser únics.")
+        self.light_entity_ids = light_ids
+        self.entity_ids = entity_ids
+        self.catalog = catalog_for(light_ids, entity_ids)
         self.by_id = {item["entity_id"]: item for item in self.catalog}
         for item in list_option(options, "verified_actions"):
             entity_id, separator, action = item.partition(":")
@@ -295,7 +297,7 @@ def filtered_attributes(domain, raw):
     result = {}
     if not isinstance(raw, dict):
         return result
-    for key in ATTRS.get(domain, set()):
+    for key in ATTRS.get(domain, set()) | {"friendly_name"}:
         value = raw.get(key)
         if key not in raw:
             continue
@@ -338,6 +340,24 @@ def service_field(services, domain, service, field):
     return search(services[domain][service].get("fields"))
 
 
+def service_has_extra_fields(services, domain, service):
+    """Generic service buttons are safe only when entity_id is the sole input."""
+    if not service_exists(services, domain, service):
+        return True
+
+    def inspect(fields, depth=0):
+        if not isinstance(fields, dict) or depth > 5:
+            return True
+        for key, value in fields.items():
+            if key == "entity_id":
+                continue
+            if key != "fields" or not isinstance(value, dict) or inspect(value, depth + 1):
+                return True
+        return False
+
+    return inspect(services[domain][service].get("fields", {}))
+
+
 def controls_for(item, state, attrs, services, settings):
     controls = []
     domain, entity_id = item["domain"], item["entity_id"]
@@ -370,7 +390,7 @@ def controls_for(item, state, attrs, services, settings):
             add("color_temp_kelvin", "Temperatura de color (K)", "range", "turn_on", "color_temp_kelvin",
                 min=math.ceil(low), max=math.floor(high), step=1,
                 value=value if number(value) and low <= value <= high else None)
-    elif domain in {"switch", "input_boolean"} and item["category"] == "adaptive" and state in {"on", "off"}:
+    elif domain in {"switch", "input_boolean"} and state in {"on", "off"}:
         add("turn_on", "Activar")
         add("turn_off", "Desactivar")
     elif domain == "scene":
@@ -427,6 +447,14 @@ def controls_for(item, state, attrs, services, settings):
             value = attrs.get("volume_level")
             add("volume_set", "Volum", "range", field="volume_level", min=0, max=1, step=0.01,
                 value=value if number(value) and 0 <= value <= 1 else None)
+    standard = ACTION_NAMES.get(domain, set())
+    for verified in settings.verified:
+        entity_id, separator, action = verified.partition(":")
+        if (separator and entity_id == item["entity_id"] and action not in standard
+                and service_exists(services, domain, action)
+                and not service_has_extra_fields(services, domain, action)):
+            label = " ".join(part.capitalize() for part in action.split("_"))
+            add(action, label)
     return controls
 
 
@@ -443,14 +471,10 @@ def entities_for(states, services, settings, connected):
                 value = raw.get("state")
                 entity["state"] = value if short_string(value, 256) else None
                 entity["status"] = value if value in ("unavailable", "unknown") else ("ok" if entity["state"] is not None else "unknown")
-                if item["slot"] == "water_showers" and entity["status"] == "ok":
-                    try:
-                        valid_showers = math.isfinite(float(value)) and float(value) >= 0
-                    except (ValueError, TypeError):
-                        valid_showers = False
-                    if not valid_showers:
-                        entity["state"], entity["status"] = None, "unknown"
                 entity["attributes"] = filtered_attributes(item["domain"], raw.get("attributes"))
+                friendly_name = entity["attributes"].get("friendly_name")
+                if short_string(friendly_name, 120) and friendly_name.strip():
+                    entity["name"] = friendly_name.strip()
                 if entity["status"] == "ok":
                     entity["controls"] = controls_for(item, value, entity["attributes"], services, settings)
         entities.append(entity)

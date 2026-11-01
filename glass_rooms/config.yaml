@@ -1,9 +1,9 @@
 name: Glass Rooms
-version: "1.0.4"
+version: "1.0.5"
 breaking_versions:
-  - "1.0.4"
+  - "1.0.5"
 slug: glass_rooms
-description: "Panell local per a iPad amb controls de Home Assistant verificats"
+description: "Panell local per a iPad amb inventari i controls configurables"
 arch:
   - aarch64
   - amd64
@@ -22,63 +22,8 @@ map:
   - type: ssl
     read_only: true
 options:
-  entity_ids:
-    light_zha_costelles: ""
-    light_zha_cuina: ""
-    light_zha_dutxa: ""
-    light_zha_lavabo: ""
-    light_zha_menjador: ""
-    light_zha_passadis: ""
-    light_zha_rebedor: ""
-    light_zha_totes: ""
-    light_fan_bedroom: ""
-    light_fan_office: ""
-    light_hue_00: ""
-    light_hue_01: ""
-    light_hue_03: ""
-    light_hue_04: ""
-    light_hue_05: ""
-    light_hue_02: ""
-    light_hue_06: ""
-    light_hue_11: ""
-    light_hue_13: ""
-    light_hue_14: ""
-    light_hue_07: ""
-    light_hue_08: ""
-    light_hue_09: ""
-    light_hue_10: ""
-    light_hue_12: ""
-    light_phwa_20: ""
-    light_phwa_21: ""
-    light_phwa_22: ""
-    adaptive_main: ""
-    adaptive_brightness: ""
-    adaptive_color: ""
-    adaptive_sleep: ""
-    circadian_indicator: ""
-    scene_cozy: ""
-    scene_sofa: ""
-    alarm_panel: ""
-    alarm_status: ""
-    alarm_toggle_script: ""
-    door_living_room: ""
-    window_office: ""
-    window_living_room: ""
-    door_hall: ""
-    camera_motion: ""
-    camera_motion_alarm: ""
-    camera_person: ""
-    water_heater: ""
-    water_showers: ""
-    water_process_temperature: ""
-    water_heating: ""
-    water_night_mode: ""
-    water_permanent_boost: ""
-    water_power: ""
-    fan_bedroom: ""
-    fan_office: ""
-    media_room: ""
-    media_tv: ""
+  light_entity_ids: []
+  entity_ids: []
   panel_password: ""
   allowed_hosts: []
   allowed_networks: []
@@ -90,63 +35,10 @@ options:
   tls_certfile: ""
   tls_keyfile: ""
 schema:
+  light_entity_ids:
+    - str
   entity_ids:
-    light_zha_costelles: str
-    light_zha_cuina: str
-    light_zha_dutxa: str
-    light_zha_lavabo: str
-    light_zha_menjador: str
-    light_zha_passadis: str
-    light_zha_rebedor: str
-    light_zha_totes: str
-    light_fan_bedroom: str
-    light_fan_office: str
-    light_hue_00: str
-    light_hue_01: str
-    light_hue_03: str
-    light_hue_04: str
-    light_hue_05: str
-    light_hue_02: str
-    light_hue_06: str
-    light_hue_11: str
-    light_hue_13: str
-    light_hue_14: str
-    light_hue_07: str
-    light_hue_08: str
-    light_hue_09: str
-    light_hue_10: str
-    light_hue_12: str
-    light_phwa_20: str
-    light_phwa_21: str
-    light_phwa_22: str
-    adaptive_main: str
-    adaptive_brightness: str
-    adaptive_color: str
-    adaptive_sleep: str
-    circadian_indicator: str
-    scene_cozy: str
-    scene_sofa: str
-    alarm_panel: str
-    alarm_status: str
-    alarm_toggle_script: str
-    door_living_room: str
-    window_office: str
-    window_living_room: str
-    door_hall: str
-    camera_motion: str
-    camera_motion_alarm: str
-    camera_person: str
-    water_heater: str
-    water_showers: str
-    water_process_temperature: str
-    water_heating: str
-    water_night_mode: str
-    water_permanent_boost: str
-    water_power: str
-    fan_bedroom: str
-    fan_office: str
-    media_room: str
-    media_tv: str
+    - str
   panel_password: password
   allowed_hosts:
     - str
