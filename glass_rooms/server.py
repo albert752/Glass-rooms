@@ -534,6 +534,28 @@ class App:
         self.attempts = {}
         self.lock = threading.Lock()
         self.action_lock = threading.Lock()
+        self.rejected_states = {}
+        self.rejected_states_lock = threading.Lock()
+
+    def apply_rejected_states(self, entities, connected):
+        if not connected:
+            return
+        with self.rejected_states_lock:
+            for entity in entities:
+                entity_id = entity["entity_id"]
+                rejected_state = self.rejected_states.get(entity_id)
+                if rejected_state is None:
+                    continue
+                if entity["status"] == "ok" and entity["state"] != rejected_state:
+                    del self.rejected_states[entity_id]
+                    continue
+                if entity["state"] == rejected_state:
+                    entity["status"] = "unavailable"
+                    entity["controls"] = []
+
+    def mark_rejected_state(self, entity):
+        with self.rejected_states_lock:
+            self.rejected_states[entity["entity_id"]] = entity["state"]
 
     def rate_limit(self, address, kind, maximum, period):
         now = time.monotonic()
@@ -585,11 +607,13 @@ class App:
                 connected = True
             except PublicError as exc:
                 failure = exc.message
+        entities = entities_for(states, services, self.settings, connected or self.settings.demo_lights)
+        self.apply_rejected_states(entities, connected)
         result = {"connected": connected, "preview": self.settings.preview, "demo": self.settings.demo_lights,
                   "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat() if connected else None,
                   "error": failure, "version": version, "rooms": ROOMS,
                   "transport": self.settings.scheme,
-                  "entities": entities_for(states, services, self.settings, connected or self.settings.demo_lights)}
+                  "entities": entities}
         if audit:
             result["verification"] = {
                 "rule": "Atributs actuals + servei disponible + prova real autoritzada a verified_actions.",
@@ -614,10 +638,14 @@ class App:
             # Read immediately before the call: a browser snapshot never authorizes a write.
             states, services, _ = self.client.snapshot(self.settings.by_id)
             entities = entities_for(states, services, self.settings, True)
+            self.apply_rejected_states(entities, True)
             entity = next(item for item in entities if item["entity_id"] == body["entity_id"])
             service, payload = action_payload(entity, body)
             try:
                 self.client.call(entity["domain"], service, payload)
+            except PublicError:
+                self.mark_rejected_state(entity)
+                raise
             finally:
                 # Do not retain the PIN in application state, logs or a queue.
                 payload.pop("code", None)
