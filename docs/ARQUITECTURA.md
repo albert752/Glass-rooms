@@ -32,7 +32,7 @@ Els logs no inclouen cossos, PINs, capçaleres ni respostes de Core. El PIN es b
 |---|---|---|
 | JavaScript | ES5 sense mòduls, classes, fletxes, async/await o transpilers | Anàlisi sintàctica amb Acorn; pendent d'execució al Safari real |
 | Dades | XMLHttpRequest, peticions al mateix origen | Sense fetch, WebSocket, service worker ni APIs modernes obligatòries |
-| Actualització | Lectura seqüencial cada 12 segons; pausa quan la pàgina s'amaga | En tornar, actualitza; no és un sistema d'alarma en temps real |
+| Actualització | XMLHttpRequest al mateix origen cada 2 segons, amb lectures REST en paral·lel; pausa quan la pàgina s'amaga | En tornar, actualitza; els canvis apareixen normalment en un màxim aproximat de 2 segons |
 | Disposició | Floats, blocs i posició fixa; controls sense flexbox | Sense CSS Grid, variables CSS o gap necessaris |
 | Vidre | Superfícies clares sense desenfocament per defecte | Sense desenfocament a la revisió 1.0.1; superfícies opaques |
 | Il·lustracions | Vuit SVG locals petits, sense filtres costosos | No són plànols ni ubicacions de dispositius |
