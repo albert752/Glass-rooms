@@ -12,6 +12,7 @@
     home:'<path d="M3 10l9-7 9 7v10H3z"/><path d="M9 20v-7h6v7"/>',
     overview:'<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
     light:'<path d="M8 16c0-3-3-4-3-7a7 7 0 0114 0c0 3-3 4-3 7zM9 19h6M10 22h4"/>',
+    lightOn:'<path d="M8 16c0-3-3-4-3-7a7 7 0 0114 0c0 3-3 4-3 7v1H8zM9 19h6v1H9zM10 21h4v1h-4z"/>',
     shield:'<path d="M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
     spark:'<path d="M12 3l2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4zM20 2v4M18 4h4"/>',
     settings:'<circle cx="12" cy="12" r="3"/><path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z"/>',
@@ -34,7 +35,8 @@
   function icon(name) {
     var n=el('span','icon'); n.setAttribute('aria-hidden','true');
     // Parse SVG as XML, not HTML: keep the namespace explicit on older WebKit.
-    var source='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+(ICONS[name]||ICONS.home)+'</svg>';
+    var solid=name==='lightOn';
+    var source='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="23" height="23" fill="'+(solid?'currentColor':'none')+'" stroke="'+(solid?'none':'currentColor')+'" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+(ICONS[name]||ICONS.home)+'</svg>';
     var parsed=new DOMParser().parseFromString(source,'image/svg+xml');
     n.appendChild(document.importNode(parsed.documentElement,true));
     return n;
@@ -103,30 +105,35 @@
       var wrap=el('div','room-wrap'), card=button('','room-card',function() { if(Date.now()>=suppressRoomClickUntil) { openRoom(room.id); } });
       card.appendChild(el('h3','room-title',room.name));
       var art=el('img','room-art'); art.src='./assets/'+room.id+'.svg'; art.alt=''; art.setAttribute('aria-hidden','true'); card.appendChild(art);
-      var entities=byRoom(room.id), known=0, issues=0, lights=0, lit=false, roomLights=[], canTurnOn=true, i;
+      var entities=byRoom(room.id), known=0, issues=0, lights=0, lit=false, roomLights=[], canToggle=true, toggleAction, i;
       for(i=0;i<entities.length;i++) {
         if(entities[i].status==='ok') { known++; } else { issues++; }
         if(entities[i].domain==='light') {
           lights++;
           roomLights.push(entities[i]);
-          var turnOn=entities[i].controls||[], turnOnReady=false, ci;
-          for(ci=0;ci<turnOn.length;ci++) { if(turnOn[ci].action==='turn_on'&&turnOn[ci].enabled) { turnOnReady=true; } }
-          if(!turnOnReady) { canTurnOn=false; }
           if(entities[i].status==='ok'&&entities[i].state==='on') { lit=true; }
         }
       }
       card.setAttribute('aria-label','Obre '+room.name+(lights?(lit?', amb llums encesos':', llums apagats o no disponibles'):''));
       if(lights) {
         card.className+=' '+(lit?'room-lit':'room-dark');
-        var badge=button('','room-light-badge',function(event) { if(event) { event.stopPropagation(); } turnOnRoom(room.name,roomLights); });
-        badge.disabled=!canTurnOn||!state.connected||state.preview||busy;
-        badge.setAttribute('aria-label','Encén totes les llums de '+room.name);
-        badge.setAttribute('title',badge.disabled?'Control pendent de connexió o verificació':'Encén totes les llums de '+room.name);
-        badge.appendChild(icon('light')); wrap.appendChild(badge);
+        toggleAction=lit?'turn_off':'turn_on';
+        for(i=0;i<roomLights.length;i++) {
+          var roomControls=roomLights[i].controls||[], toggleReady=false, ci;
+          if(roomLights[i].status!=='ok') { canToggle=false; }
+          for(ci=0;ci<roomControls.length;ci++) { if(roomControls[ci].action===toggleAction&&roomControls[ci].enabled) { toggleReady=true; } }
+          if(!toggleReady) { canToggle=false; }
+        }
+        var badge=button('','room-light-badge',function(event) { if(event) { event.stopPropagation(); } turnRoomLights(room.name,roomLights,toggleAction); });
+        badge.className+=' '+(lit?'bulb-lit':'bulb-dark');
+        badge.disabled=!canToggle||!state.connected||state.preview||busy;
+        badge.setAttribute('aria-label',(lit?'Apaga':'Encén')+' totes les llums de '+room.name);
+        badge.setAttribute('title',badge.disabled?'Control pendent de connexió o verificació':(lit?'Apaga':'Encén')+' totes les llums de '+room.name);
+        badge.appendChild(icon(lit?'lightOn':'light'));
       }
       var msg=entities.length?((state.connected||state.demo)?known+' amb estat'+(issues?' · '+issues+' pendents':''):'Sense connexió'):'Ubicació pendent';
       var meta=el('div','room-meta'+(issues?' has-issue':'')); meta.appendChild(el('span','status-dot')); meta.appendChild(document.createTextNode(msg)); card.appendChild(meta);
-      wrap.appendChild(card); grid.appendChild(wrap);
+      wrap.appendChild(card); if(lights) { wrap.appendChild(badge); } grid.appendChild(wrap);
     }); parent.appendChild(grid);
   }
   function summaryValue(category) {
@@ -255,13 +262,13 @@
       refresh(true);
     }); payload.code=null; code=null;
   }
-  function turnOnRoom(roomName,lights) {
+  function turnRoomLights(roomName,lights,action) {
     var i;
     if(busy||!state.connected||state.preview||!lights.length) { return; }
     for(i=0;i<lights.length;i++) {
       var controls=lights[i].controls||[], ready=false, j;
-      for(j=0;j<controls.length;j++) { if(controls[j].action==='turn_on'&&controls[j].enabled) { ready=true; break; } }
-      if(!ready) { toast('La llum d’aquesta habitació encara no està verificada.'); return; }
+      for(j=0;j<controls.length;j++) { if(controls[j].action===action&&controls[j].enabled) { ready=true; break; } }
+      if(!ready) { toast('L’ordre per a aquesta habitació encara no està verificada.'); return; }
     }
     busy=true;
     function finish(error) {
@@ -272,7 +279,7 @@
     }
     function next(index) {
       if(index>=lights.length) { finish(null); return; }
-      request('POST','./api/action',{entity_id:lights[index].entity_id,action:'turn_on'},function(error,data,status) {
+      request('POST','./api/action',{entity_id:lights[index].entity_id,action:action},function(error,data,status) {
         if(status===401) { busy=false; requireLogin(); return; }
         if(error) { finish(error); return; }
         next(index+1);
@@ -289,7 +296,7 @@
     section=el('div','settings-section'); section.appendChild(el('h3','','Connexió')); section.appendChild(el('p','muted',state.demo?'Previsualització amb llums ficticis. No hi ha connexió amb Home Assistant ni controls actius.':(state.preview?'Previsualització local. No hi ha dades de Home Assistant ni controls actius.':(state.connected?'Home Assistant connectat.':'Pendent de connectar amb Home Assistant.')))); section.appendChild(el('p','muted',window.location.protocol==='https:'?'Transport HTTPS.':'Transport HTTP local, sense xifrat.'));
     section.appendChild(button('Comprova la connexió','action-button',function() { refresh(true); })); section.appendChild(button('Informe de verificació','action-button',showAudit));
     if(authenticated&&!state.preview) { section.appendChild(button('Tanca la sessió','action-button',function() { request('POST','./api/logout',{},function(error) { if(error) { toast(error); return; } requireLogin(); }); })); }
-    parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.0.6 · Il·lustracions conceptuals. La correspondència amb les habitacions, els grups i els controls es confirma durant la instal·lació.'));
+    parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.0.7 · Il·lustracions conceptuals. La correspondència amb les habitacions, els grups i els controls es confirma durant la instal·lació.'));
   }
   function showAudit() {
     var parent=openModal('Verificació','CONNEXIÓ I CAPACITATS','audit','audit'); parent.appendChild(el('p','info-box','Informe de lectura per completar la configuració. No inclou credencials.')); var output=el('pre','audit-json','Carregant…'); parent.appendChild(output);
@@ -385,10 +392,10 @@
     init();
     var cssReady=window.getComputedStyle && window.getComputedStyle($('css-probe'),null).width==='9px';
     if(cssReady) { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.done(); } else { $('boot-status').hidden=true; } }
-    else { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail('B4 · CSS no aplicat'); } else { $('boot-status').textContent='Glass Rooms 1.0.6: no s’ha carregat style.css.'; } }
+    else { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail('B4 · CSS no aplicat'); } else { $('boot-status').textContent='Glass Rooms 1.0.7: no s’ha carregat style.css.'; } }
   } catch(startupError) {
     if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail(startupError.name || 'Error'); return; }
     $('boot-status').hidden=false;
-    $('boot-status').textContent='Glass Rooms 1.0.6: no s’ha pogut iniciar la interfície. Torna a carregar la pàgina i comprova que tots els fitxers són de la mateixa versió.';
+    $('boot-status').textContent='Glass Rooms 1.0.7: no s’ha pogut iniciar la interfície. Torna a carregar la pàgina i comprova que tots els fitxers són de la mateixa versió.';
   }
 }());
