@@ -26,6 +26,7 @@
   var state = {connected:false,preview:false,entities:[],fetched_at:null};
   var currentView = 'rooms', csrf = '', authenticated = false, loading = false, busy = false;
   var pollTimer = null, toastTimer = null, modal = null, previousFocus = null, theme = 'auto', glass = false;
+  var suppressRoomClickUntil = 0;
   var $ = function (id) { return document.getElementById(id); };
   function el(tag, cls, text) { var n=document.createElement(tag); if(cls) { n.className=cls; } if(text!==undefined) { n.textContent=text; } return n; }
   function empty(n) { while(n.firstChild) { n.removeChild(n.firstChild); } }
@@ -73,7 +74,7 @@
   function byCategory(category) { var result=[],i; for(i=0;i<state.entities.length;i++) { if(state.entities[i].category===category) { result.push(state.entities[i]); } } return result; }
   function byRoom(room) { var result=[],i; for(i=0;i<state.entities.length;i++) { if(state.entities[i].room===room) { result.push(state.entities[i]); } } return result; }
   function stateText(entity) {
-    if(!state.connected || !entity || entity.status==='pending') { return 'Pendent de connexió'; }
+    if((!state.connected&&!state.demo) || !entity || entity.status==='pending') { return 'Pendent de connexió'; }
     if(entity.status==='missing') { return 'No trobada a Home Assistant'; }
     if(entity.status==='unavailable') { return 'No disponible'; }
     if(entity.status==='unknown' || entity.state===null) { return 'Estat desconegut'; }
@@ -91,6 +92,7 @@
   }
   function setHeading(eyebrow,title,subtitle) { $('eyebrow').textContent=eyebrow; $('page-title').textContent=title; $('page-subtitle').textContent=subtitle; }
   function renderStatus() {
+    if(state.demo) { $('last-update').textContent='Simulació de llums · cap ordre real'; return; }
     var d=state.fetched_at?new Date(state.fetched_at):null;
     $('last-update').textContent=state.connected&&d&&!isNaN(d.getTime())?'Actualitzat a les '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds()):'Esperant dades de casa';
   }
@@ -98,24 +100,34 @@
     var label=el('h2','section-label','LES HABITACIONS'); label.appendChild(el('span','', '8 espais · llisca avall per al resum')); parent.appendChild(label);
     var grid=el('div','room-grid');
     ROOMS.forEach(function(room) {
-      var wrap=el('div','room-wrap'), card=button('','room-card',function() { openRoom(room.id); });
-      card.setAttribute('aria-label','Obre '+room.name);
+      var wrap=el('div','room-wrap'), card=button('','room-card',function() { if(Date.now()>=suppressRoomClickUntil) { openRoom(room.id); } });
       card.appendChild(el('h3','room-title',room.name));
       var art=el('img','room-art'); art.src='./assets/'+room.id+'.svg'; art.alt=''; art.setAttribute('aria-hidden','true'); card.appendChild(art);
-      var entities=byRoom(room.id), known=0, issues=0, i;
-      for(i=0;i<entities.length;i++) { if(entities[i].status==='ok') { known++; } else { issues++; } }
-      var msg=entities.length?(state.connected?known+' amb estat'+(issues?' · '+issues+' pendents':''):'Sense connexió'):'Ubicació pendent';
+      var entities=byRoom(room.id), known=0, issues=0, lights=0, lit=false, i;
+      for(i=0;i<entities.length;i++) {
+        if(entities[i].status==='ok') { known++; } else { issues++; }
+        if(entities[i].domain==='light') {
+          lights++;
+          if(entities[i].status==='ok'&&entities[i].state==='on') { lit=true; }
+        }
+      }
+      card.setAttribute('aria-label','Obre '+room.name+(lights?(lit?', amb llums encesos':', llums apagats o no disponibles'):''));
+      if(lights) {
+        card.className+=' '+(lit?'room-lit':'room-dark');
+        var badge=el('span','room-light-badge'); badge.setAttribute('aria-hidden','true'); badge.appendChild(icon('light')); card.appendChild(badge);
+      }
+      var msg=entities.length?((state.connected||state.demo)?known+' amb estat'+(issues?' · '+issues+' pendents':''):'Sense connexió'):'Ubicació pendent';
       var meta=el('div','room-meta'+(issues?' has-issue':'')); meta.appendChild(el('span','status-dot')); meta.appendChild(document.createTextNode(msg)); card.appendChild(meta);
       wrap.appendChild(card); grid.appendChild(wrap);
     }); parent.appendChild(grid);
   }
   function summaryValue(category) {
-    if(!state.connected) { return '—'; }
+    if(!state.connected&&!state.demo) { return '—'; }
     var items=byCategory(category), valid=0,i; for(i=0;i<items.length;i++) { if(items[i].status==='ok') { valid++; } }
     return valid+' / '+items.length+' amb estat';
   }
   function renderOverview(parent) {
-    var label=el('h2','section-label','D’UN COP D’ULL'); label.appendChild(el('span','', 'Només lectures reals')); parent.appendChild(label);
+    var label=el('h2','section-label','D’UN COP D’ULL'); label.appendChild(el('span','', state.demo?'Llums simulats':'Només lectures reals')); parent.appendChild(label);
     var grid=el('div','summary-grid');
     [{id:'lights',name:'Il·luminació',icon:'light',note:'Llums configurats'}, {id:'security',name:'Seguretat',icon:'shield',note:'Entitats de seguretat configurades'}, {id:'water',name:'Aigua calenta',icon:'water',note:'Entitats d’aigua configurades'}, {id:'media',name:'Música i televisió',icon:'media',note:'Reproductors configurats'}, {id:'fans',name:'Ventiladors',icon:'fan',note:'Ventiladors configurats'}, {id:'switches',name:'Interruptors',icon:'light',note:'Interruptors configurats'}, {id:'scenes',name:'Escenes',icon:'spark',note:'Escenes configurades'}, {id:'other',name:'Altres dispositius',icon:'overview',note:'Altres entitats configurades'}].forEach(function(item) {
       if(!byCategory(item.id).length) { return; }
@@ -127,8 +139,8 @@
   function renderView() {
     var view=$('view'); empty(view); var buttons=document.querySelectorAll('[data-nav]'),i;
     for(i=0;i<buttons.length;i++) { var active=buttons[i].getAttribute('data-nav')===currentView; buttons[i].className='nav-button'+(active?' active':''); buttons[i].setAttribute('aria-current',active?'page':'false'); }
-    if(currentView==='rooms') { setHeading('EL TEU ESPAI','Casa, amb calma.','Cada estança, al teu ritme.'); renderRooms(view); }
-    else { setHeading('LA CASA, D’UN COP D’ULL','Tot al seu lloc.','L’estat de casa, sense presses.'); renderOverview(view); }
+    if(currentView==='rooms') { setHeading('EL TEU ESPAI','Casa, amb calma.',state.demo?'Previsualització · llums simulats':'Cada estança, al teu ritme.'); renderRooms(view); }
+    else { setHeading('LA CASA, D’UN COP D’ULL','Tot al seu lloc.',state.demo?'Previsualització · llums simulats':'L’estat de casa, sense presses.'); renderOverview(view); }
     renderStatus();
   }
   function navigate(to) {
@@ -167,7 +179,7 @@
   }
   function displayAttributes(parent,entity) {
     var a=entity.attributes||{}, parts=[];
-    if(entity.status!=='ok'||!state.connected) { return; }
+    if(entity.status!=='ok'||(!state.connected&&!state.demo)) { return; }
     if(entity.domain==='water_heater') {
       if(safeNumber(a.current_temperature)) { parts.push('Temperatura actual: '+a.current_temperature+' '+(a.temperature_unit||'°')); }
       if(a.operation_mode) { parts.push('Mode: '+a.operation_mode); }
@@ -182,7 +194,7 @@
     entities.forEach(function(entity) {
       var item=el('li','device-item'), name=el('h3','device-name',entity.name);
       if(entity.is_group) { name.appendChild(el('span','group-badge','Grup')); } item.appendChild(name);
-      item.appendChild(el('p','device-state'+(entity.status==='ok'&&state.connected?'':' issue'),stateText(entity)));
+      item.appendChild(el('p','device-state'+(entity.status==='ok'&&(state.connected||state.demo)?'':' issue'),stateText(entity)));
       displayAttributes(item,entity);
       if(entity.note) { item.appendChild(el('p','device-note',entity.note)); }
       if(entity.inventory_area&&!entity.room) { item.appendChild(el('p','device-note','Àrea de l’inventari: '+entity.inventory_area+' · ubicació física pendent')); }
@@ -241,7 +253,7 @@
     [{id:'auto',name:'Automàtic'},{id:'day',name:'Dia'},{id:'night',name:'Nit'}].forEach(function(choice) { var b=button(choice.name,theme===choice.id?'selected':'',function() { theme=choice.id; storePreference(); applyTheme(); openSettings(); }); b.setAttribute('aria-pressed',theme===choice.id?'true':'false'); segmented.appendChild(b); });
     section.appendChild(segmented); section.appendChild(el('p','muted','Automàtic: dia de 7 a 20 h, segons el rellotge de l’iPad.')); parent.appendChild(section);
     section=el('div','settings-section'); section.appendChild(el('h3','','Una vista lleugera')); var label=el('label','check-label'), check=el('input'); check.type='checkbox'; check.checked=glass; on(check,'change',function() { glass=check.checked; storePreference(); applyTheme(); }); label.appendChild(check); label.appendChild(document.createTextNode('Activa el contrast suau')); section.appendChild(label); section.appendChild(el('p','muted','Superfícies sense desenfocament, adaptades a Safari d’iOS 9.3.5.')); parent.appendChild(section);
-    section=el('div','settings-section'); section.appendChild(el('h3','','Connexió')); section.appendChild(el('p','muted',state.preview?'Previsualització local. No hi ha dades de Home Assistant ni controls actius.':(state.connected?'Home Assistant connectat.':'Pendent de connectar amb Home Assistant.'))); section.appendChild(el('p','muted',window.location.protocol==='https:'?'Transport HTTPS.':'Transport HTTP local, sense xifrat.'));
+    section=el('div','settings-section'); section.appendChild(el('h3','','Connexió')); section.appendChild(el('p','muted',state.demo?'Previsualització amb llums ficticis. No hi ha connexió amb Home Assistant ni controls actius.':(state.preview?'Previsualització local. No hi ha dades de Home Assistant ni controls actius.':(state.connected?'Home Assistant connectat.':'Pendent de connectar amb Home Assistant.')))); section.appendChild(el('p','muted',window.location.protocol==='https:'?'Transport HTTPS.':'Transport HTTP local, sense xifrat.'));
     section.appendChild(button('Comprova la connexió','action-button',function() { refresh(true); })); section.appendChild(button('Informe de verificació','action-button',showAudit));
     if(authenticated&&!state.preview) { section.appendChild(button('Tanca la sessió','action-button',function() { request('POST','./api/logout',{},function(error) { if(error) { toast(error); return; } requireLogin(); }); })); }
     parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.0.2 · Il·lustracions conceptuals. La correspondència amb les habitacions, els grups i els controls es confirma durant la instal·lació.'));
@@ -292,7 +304,7 @@
     for(i=0;i<nodes.length;i++) { nodes[i].appendChild(icon(nodes[i].getAttribute('data-icon'))); }
     nodes=document.querySelectorAll('[data-nav]');
     for(i=0;i<nodes.length;i++) { (function(n) { on(n,'click',function() { navigate(n.getAttribute('data-nav')); }); }(nodes[i])); }
-    on($('overview-button'),'click',function() { navigate('overview'); }); on($('settings-button'),'click',openSettings);
+    on($('settings-button'),'click',openSettings);
     on($('close-modal'),'click',closeModal); on($('modal-backdrop'),'click',closeModal);
     on($('login-form'),'submit',function(event) {
       event.preventDefault(); var password=$('panel-password').value; $('panel-password').value=''; $('login-submit').disabled=true; $('login-error').textContent='';
@@ -309,11 +321,22 @@
     });
     var start=null;
     on($('main'),'touchstart',function(event) {
-      var t=event.touches[0], tag=event.target.tagName;
-      if(modal||event.touches.length!==1||window.pageYOffset>0||tag==='BUTTON'||tag==='INPUT'||tag==='SELECT') { start=null; return; }
+      if(currentView!=='rooms'||modal||event.touches.length!==1||window.pageYOffset>0) { start=null; return; }
+      var t=event.touches[0];
       start={x:t.clientX,y:t.clientY};
     });
-    on($('main'),'touchend',function(event) { if(!start) { return; } var t=event.changedTouches[0]; if(t&&t.clientY-start.y>85&&Math.abs(t.clientX-start.x)<55) { navigate('overview'); } start=null; });
+    on($('main'),'touchmove',function(event) {
+      if(!start||event.touches.length!==1) { start=null; return; }
+      var t=event.touches[0], dx=t.clientX-start.x, dy=t.clientY-start.y;
+      if(Math.abs(dx)>=55) { start=null; return; }
+      if(dy>20&&event.cancelable!==false) { event.preventDefault(); }
+    });
+    on($('main'),'touchend',function(event) {
+      if(!start) { return; }
+      var t=event.changedTouches[0], down=t&&t.clientY-start.y>85&&Math.abs(t.clientX-start.x)<55;
+      start=null;
+      if(down) { suppressRoomClickUntil=Date.now()+800; navigate('overview'); }
+    });
     on($('main'),'touchcancel',function() { start=null; });
     on(document,'visibilitychange',function() { if(document.hidden) { clearTimeout(pollTimer); if($('alarm-code')) { $('alarm-code').value=''; } } else { clockTick(); refresh(false); } });
     on(window,'pageshow',function(event) { if(event.persisted) { csrf=''; authenticated=false; if($('alarm-code')) { $('alarm-code').value=''; } session(); } });

@@ -125,8 +125,9 @@ def action_allowed(entity_id, action, by_id=None):
 
 
 class Settings:
-    def __init__(self, options, preview=False, port=8099, lan_preview=False, lan_address=None):
+    def __init__(self, options, preview=False, port=8099, lan_preview=False, lan_address=None, demo_lights=False):
         self.preview = preview
+        self.demo_lights = demo_lights
         self.verified = set()
         self.room_assignments = {}
         self.alarm_modes = set()
@@ -138,6 +139,10 @@ class Settings:
         self.catalog = CATALOG
         self.by_id = {item["entity_id"]: item for item in self.catalog}
         if preview:
+            if demo_lights:
+                self.catalog = catalog_for(["light.demo_" + room["id"] for room in ROOMS])
+                self.by_id = {item["entity_id"]: item for item in self.catalog}
+                self.room_assignments = {"light.demo_" + room["id"]: room["id"] for room in ROOMS}
             self.allowed_hosts = {"127.0.0.1:" + str(port), "localhost:" + str(port)}
             self.allowed_networks = [ipaddress.ip_network("127.0.0.0/8")]
             if lan_preview:
@@ -568,17 +573,23 @@ class App:
         states, services, version = {}, {}, None
         connected = False
         failure = "Previsualització local: sense connexió amb Home Assistant." if self.settings.preview else None
-        if not self.settings.preview:
+        if self.settings.demo_lights:
+            states = {"light.demo_" + room["id"]: {
+                "state": "on" if index % 3 == 0 else "off",
+                "attributes": {"friendly_name": "Llum del " + room["name"].lower()}}
+                for index, room in enumerate(ROOMS)}
+            failure = None
+        elif not self.settings.preview:
             try:
                 states, services, version = self.client.snapshot(self.settings.by_id)
                 connected = True
             except PublicError as exc:
                 failure = exc.message
-        result = {"connected": connected, "preview": self.settings.preview,
+        result = {"connected": connected, "preview": self.settings.preview, "demo": self.settings.demo_lights,
                   "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat() if connected else None,
                   "error": failure, "version": version, "rooms": ROOMS,
                   "transport": self.settings.scheme,
-                  "entities": entities_for(states, services, self.settings, connected)}
+                  "entities": entities_for(states, services, self.settings, connected or self.settings.demo_lights)}
         if audit:
             result["verification"] = {
                 "rule": "Atributs actuals + servei disponible + prova real autoritzada a verified_actions.",
@@ -853,10 +864,13 @@ def main():
     parser.add_argument("--preview", action="store_true", help="Només loopback, sense dades ni accions reals")
     parser.add_argument("--lan-preview", action="store_true", help="Previsualització només lectura accessible des de la LAN privada")
     parser.add_argument("--lan-address", help="Adreça IPv4 LAN del servidor per a --lan-preview")
+    parser.add_argument("--demo-lights", action="store_true", help="Llums ficticis configurats a les vuit estances; només amb --preview")
     parser.add_argument("--port", type=int, default=8099)
     args = parser.parse_args()
     if args.lan_preview:
         args.preview = True
+    if args.demo_lights and not args.preview:
+        parser.error("--demo-lights requereix --preview o --lan-preview.")
     if not 1 <= args.port <= 65535:
         parser.error("El port ha d'estar entre 1 i 65535.")
     try:
@@ -872,7 +886,7 @@ def main():
                     finally:
                         probe.close()
             settings = Settings({}, preview=True, port=args.port, lan_preview=args.lan_preview,
-                                lan_address=lan_address)
+                                lan_address=lan_address, demo_lights=args.demo_lights)
             client = None
         else:
             with open("/data/options.json", "r", encoding="utf-8") as stream:
@@ -896,7 +910,9 @@ def main():
         message = str(exc) if type(exc) is ValueError and not isinstance(exc, json.JSONDecodeError) else "No s'ha pogut carregar la configuració, obrir el port o iniciar TLS."
         print("Glass Rooms: " + message, flush=True)
         return 1
-    print("Glass Rooms iniciat: " + ("previsualització local, només lectura." if args.preview else "accés restringit a la LAN configurada."), flush=True)
+    print("Glass Rooms iniciat: " + ("previsualització LAN, només lectura." if args.lan_preview else
+                                      "previsualització local, només lectura." if args.preview else
+                                      "accés restringit a la LAN configurada."), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -1,0 +1,47 @@
+# Arquitectura i compatibilitat
+
+```text
+iPad / navegador de casa
+  │ HTTP o HTTPS directe, mateix origen, port 8099
+  ▼
+Glass Rooms (app local de Home Assistant OS)
+  ├─ www/: HTML, CSS, ES5 i SVG sense secrets
+  ├─ sessió HttpOnly en memòria + comprovació de xarxa, Host, origen i CSRF
+  ├─ inventari dinàmic llegit de `light_entity_ids` i `entity_ids` + verificació explícita per acció
+  └─ SUPERVISOR_TOKEN només al procés servidor
+       │ http://supervisor/core/api
+       ▼
+Home Assistant Core → integracions → dispositius
+```
+
+## Límits d'accés
+
+El navegador no parla directament amb l'API de Core. El servidor consulta estats, serveis i la versió, retorna només el catàleg i els atributs seleccionats i torna a llegir les capacitats abans d'enviar cada ordre. Una crida acceptada es mostra com a «pendent de confirmar estat»; no es modifica l'estat visual de manera optimista. No hi ha reintents automàtics d'ordres.
+
+Una acció necessita tres comprovacions: capacitat actual publicada, servei disponible i entrada exacta a `verified_actions` després d'una prova real. La presència d'una entitat a l'inventari no habilita res. `room_assignments` només configura la navegació; no crea grups ni canvia Home Assistant.
+
+El token de Supervisor té accés ampli a Core. La restricció per entitat és una responsabilitat del servidor, no un permís individual concedit per Home Assistant. L'app no sol·licita l'API de Supervisor, Docker, xarxa de l'amfitrió, dispositius, ni desactivació de protecció. No és un proxy d'accions arbitràries.
+
+La contrasenya del panell queda en les opcions privades de Supervisor; en memòria es comprova amb PBKDF2. Les sessions aleatòries caduquen al cap de 12 hores i es perden en reiniciar; estan lligades a la IP del client. La cookie és HttpOnly, `SameSite=Strict` i `Secure` si hi ha TLS. El client només rep un nonce CSRF temporal. iOS 9 pot ignorar SameSite: el servidor exigeix també origen exacte o Referer del mateix origen, JSON i nonce. No accepta capçaleres de proxy com a prova de xarxa o transport.
+
+Els logs no inclouen cossos, PINs, capçaleres ni respostes de Core. El PIN es buida del camp abans de transmetre i no es desa en preferències ni en el servidor. `localStorage` només conté el tema i la preferència de vidre; si no funciona, la interfície continua amb els valors predeterminats. Les API i els recursos se serveixen amb `no-store`. La contrasenya i el PIN encara necessiten HTTPS per protegir el transport.
+
+## Eleccions per a Safari d'iOS 9
+
+| Part | Implementació | Alternativa o límit |
+|---|---|---|
+| JavaScript | ES5 sense mòduls, classes, fletxes, async/await o transpilers | Anàlisi sintàctica amb Acorn; pendent d'execució al Safari real |
+| Dades | XMLHttpRequest, peticions al mateix origen | Sense fetch, WebSocket, service worker ni APIs modernes obligatòries |
+| Actualització | Lectura seqüencial cada 12 segons; pausa quan la pàgina s'amaga | En tornar, actualitza; no és un sistema d'alarma en temps real |
+| Disposició | Floats, blocs i posició fixa; controls sense flexbox | Sense CSS Grid, variables CSS o gap necessaris |
+| Vidre | Superfícies clares sense desenfocament per defecte | Sense desenfocament a la revisió 1.0.1; superfícies opaques |
+| Il·lustracions | Vuit SVG locals petits, sense filtres costosos | No són plànols ni ubicacions de dispositius |
+| Navegació | Botons grans, resum visible, finestres, gest vertical | El botó del resum evita dependre del gest |
+| Dia/nit | Hora local del navegador: dia entre 7 i 20 h | Es pot triar manualment; no es pressuposa la sortida o posta solar |
+| Fonts | Tipografia del sistema | No hi ha descàrregues externes |
+
+L'anàlisi ES5 no valida les API DOM ni els detalls de Safari. El navegador integrat modern i una mida de 1024 × 768 no emulen iOS 9 ni l'A5 de l'iPad mini 1. Encara s'han de provar TLS, confiança del certificat, teclat, cookies, zoom, rotació, memòria i rendiment al dispositiu. No es fa cap gestió de bloqueig o activació de pantalla.
+
+El servidor és Python amb biblioteca estàndard i un nombre limitat de connexions. Està pensat per a pocs clients dins d'una LAN de confiança, no per exposar-lo a Internet. La imatge declarada és Python 3.13 Alpine per a amfitrions amd64/aarch64; construir-la i provar-la al teu Home Assistant OS forma part de la posada en servei pendent.
+
+Referències: [API REST de Home Assistant](https://developers.home-assistant.io/docs/api/rest/), [comunicació amb Supervisor](https://contributors.home-assistant.io/apps/guides/communication/), [Safari 9 segons Apple](https://developer.apple.com/library/archive/releasenotes/General/WhatsNewInSafari/Articles/Safari_9_0.html).

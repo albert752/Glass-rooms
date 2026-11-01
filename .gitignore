@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+node_modules/
+options.json
+*.pem
+*.key
+*.crt
+*.log
+artifacts/

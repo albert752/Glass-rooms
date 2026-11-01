@@ -1,0 +1,25 @@
+# Glass Rooms — internal implementation contract
+
+Local-only HA OS add-on in `glass_rooms/`. Python standard library server, static ES5 frontend under `glass_rooms/www/`. No npm production dependencies. Root docs Catalan.
+
+## Ownership
+- Backend agent: `glass_rooms/server.py`, `glass_rooms/catalog.py`, Dockerfile, config.yaml, requirements if any, backend tests.
+- Frontend/root: `glass_rooms/www/index.html`, `app.js`, `style.css`, scripts and integration.
+- Art agent: only `glass_rooms/www/assets/` (8 room SVGs, icons if helpful).
+- Documentation agent: root README.md and docs/*.
+
+## Browser API (same origin)
+GET /api/session -> {authenticated: bool, csrf: string when authenticated, preview: bool}. No secrets except short-lived CSRF nonce. Browser session cookie HttpOnly, SameSite=Strict, server memory, expires 12h max. Production credentials provided privately via add-on options; preview read-only no login on loopback only.
+POST /api/login {password} -> {authenticated:true, csrf}; POST /api/logout {}. All writes require exact Origin/Referer (Safari9 fallback) and JSON; authenticated writes also X-CSRF-Token.
+GET /api/state -> {connected:bool, preview:bool, fetched_at:ISO|null, error:string|null, version:string|null, entities:[Entity], rooms:[{id,name}], transport:string}. No synthetic values in preview, all entities state:null status:pending. Return defined catalog only, not all 308 records. Unavailable entity: status unavailable; missing: missing; unknown: unknown.
+Entity: {entity_id,name,domain,category,room:null|string,inventory_area:null|string,is_group:bool,state:null|string,status:'ok'|'pending'|'unavailable'|'unknown'|'missing',attributes:{filtered safe display attrs}, controls:[Control], note:string}. Categories: lights, adaptive, scenes, security, water, fans, media. Include only IDs in supplied request. No room assignments until configured, all groups global unassigned initially. Input boolean independent, script read-only.
+Control: {action,label,kind:'button'|'range'|'select'|'alarm',enabled:bool,reason:string|null,min:number?,max:number?,step:number?,value:any?,options:[string]?,requires_code:bool?}. Controls present only for real detected capabilities and services; enabled only if exact entity_id:action explicitly in private verified_actions. Placeholder entities have empty controls. UI shows pending explanation when no controls. Alarm controls additionally need explicitly configured modes plus code policies; not guessed from features alone. Unknown code policy blocks action.
+POST /api/action {entity_id,action,value?,code?} -> {ok:true,message:'Ordre enviada; pendent de confirmar estat.'}; body and upstream response never logged. Server re-reads state/services before validating against fixed domain/action allowlist and configured verification. No arbitrary service proxy. Never optimistic UI: refresh real state after response. Accepted service response is not proof of physical success.
+GET /api/audit -> authenticated JSON: sanitized catalog attributes, detected controls and verification blockers; no raw HA secrets. API errors {error: readable Catalan message}, non-200 on failure. State disconnected can return 200 connected:false with pending entities, never misleading stale live state.
+
+## Options and deployment contract
+panel_password (empty default refuses startup; user sets privately, >=12 chars), allowed_hosts list (empty refuses production startup; explicit IP/hostname with optional port), allowed_networks list (empty refuses startup; user enters actual LAN CIDR), verified_actions list of entity_id:action, room_assignments list of entity_id:room_id, alarm_modes list of service names, alarm_arm_code policy required/none/unknown, alarm_disarm_code required/none/unknown. All default unknown/empty. tls_certfile/tls_keyfile optional private /ssl basenames with read-only ssl mapping. TLS optional but explicitly describe HTTP credentials/PIN exposure and recommend TLS, no Internet exposure. Use forwarded headers never (direct TLS support). Supervisor token only env, fixed upstream http://supervisor/core/api. App homeassistant_api:true, no hassio_api/docker_api/privileged. Default port 8099. FROM python:3.13-alpine; architectures amd64,aarch64 (document supported HA OS hosts); fixed named app files no static traversal. Python 3.9+ local compatibility desirable.
+python3 glass_rooms/server.py --preview --port 8099 binds loopback with no real backend or actions. Production normal invocation loads /data/options.json. All configuration fail closed. Preview visual state explicitly labeled disconnected, no fake data. Room IDs menjador,cuina,habitacio,despatx,rebedor,bany,passadis,lavabo. Frontend persists only visual preferences if localStorage safe; never auth or PIN.
+
+## Verification
+Unit tests backend authorization, capabilities, code policy, payload constraints, sessions, CSRF, preview read-only. Static ES5 parse check and browser smoke tests root. Actual HA instance and iPad hardware are pending external validation. docs must distinguish performed checks from remaining checks.
