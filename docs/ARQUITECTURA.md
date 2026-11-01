@@ -9,14 +9,15 @@ Glass Rooms (app local de Home Assistant OS)
   ├─ sessió HttpOnly en memòria + comprovació de xarxa, Host, origen i CSRF
   ├─ inventari dinàmic llegit de `light_entity_ids` i `entity_ids` + verificació explícita per acció
   └─ SUPERVISOR_TOKEN només al procés servidor
-       │ http://supervisor/core/api
+       ├─ REST: http://supervisor/core/api
+       └─ WebSocket: ws://supervisor/core/websocket
        ▼
 Home Assistant Core → integracions → dispositius
 ```
 
 ## Límits d'accés
 
-El navegador no parla directament amb l'API de Core. El servidor consulta estats, serveis i la versió, retorna només el catàleg i els atributs seleccionats i torna a llegir les capacitats abans d'enviar cada ordre. Una crida acceptada es mostra com a «pendent de confirmar estat»; no es modifica l'estat visual de manera optimista. No hi ha reintents automàtics d'ordres.
+El navegador no parla directament amb l'API de Core. El servidor consulta estats, serveis i la versió, i manté una subscripció WebSocket limitada als IDs configurats. Els canvis desperten una consulta XHR de llarga espera del navegador; si la subscripció cau, es torna a consultar l'estat cada 30 segons. El servidor retorna només el catàleg i els atributs seleccionats i torna a llegir les capacitats abans d'enviar cada ordre. Una crida acceptada es mostra com a «pendent de confirmar estat»; no es modifica l'estat visual de manera optimista. No hi ha reintents automàtics d'ordres.
 
 Una acció necessita tres comprovacions: capacitat actual publicada, servei disponible i entrada exacta a `verified_actions` després d'una prova real. La presència d'una entitat a l'inventari no habilita res. `room_assignments` només configura la navegació; no crea grups ni canvia Home Assistant.
 
@@ -31,8 +32,8 @@ Els logs no inclouen cossos, PINs, capçaleres ni respostes de Core. El PIN es b
 | Part | Implementació | Alternativa o límit |
 |---|---|---|
 | JavaScript | ES5 sense mòduls, classes, fletxes, async/await o transpilers | Anàlisi sintàctica amb Acorn; pendent d'execució al Safari real |
-| Dades | XMLHttpRequest, peticions al mateix origen | Sense fetch, WebSocket, service worker ni APIs modernes obligatòries |
-| Actualització | XMLHttpRequest al mateix origen cada 2 segons, amb lectures REST en paral·lel; pausa quan la pàgina s'amaga | En tornar, actualitza; els canvis apareixen normalment en un màxim aproximat de 2 segons |
+| Dades | XMLHttpRequest, peticions al mateix origen | El navegador no rep el token ni es connecta directament a Home Assistant |
+| Actualització | WebSocket servidor-Core i notificació long-poll XHR del mateix origen; pausa amb la pàgina amagada | Lectura REST de recuperació cada 30 segons; en tornar, actualitza |
 | Disposició | Floats, blocs i posició fixa; controls sense flexbox | Sense CSS Grid, variables CSS o gap necessaris |
 | Vidre | Superfícies clares sense desenfocament per defecte | Sense desenfocament a la revisió 1.0.1; superfícies opaques |
 | Il·lustracions | Vuit SVG locals petits, sense filtres costosos | No són plànols ni ubicacions de dispositius |
@@ -42,6 +43,6 @@ Els logs no inclouen cossos, PINs, capçaleres ni respostes de Core. El PIN es b
 
 L'anàlisi ES5 no valida les API DOM ni els detalls de Safari. El navegador integrat modern i una mida de 1024 × 768 no emulen iOS 9 ni l'A5 de l'iPad mini 1. Encara s'han de provar TLS, confiança del certificat, teclat, cookies, zoom, rotació, memòria i rendiment al dispositiu. No es fa cap gestió de bloqueig o activació de pantalla.
 
-El servidor és Python amb biblioteca estàndard i un nombre limitat de connexions. Està pensat per a pocs clients dins d'una LAN de confiança, no per exposar-lo a Internet. La imatge declarada és Python 3.13 Alpine per a amfitrions amd64/aarch64; construir-la i provar-la al teu Home Assistant OS forma part de la posada en servei pendent.
+El servidor és Python amb biblioteca estàndard i `websockets==15.0.1` per mantenir la subscripció del Core. Està pensat per a pocs clients dins d'una LAN de confiança, no per exposar-lo a Internet. La imatge declarada és Python 3.13 Alpine per a amfitrions amd64/aarch64; construir-la i provar-la al teu Home Assistant OS forma part de la posada en servei pendent.
 
 Referències: [API REST de Home Assistant](https://developers.home-assistant.io/docs/api/rest/), [comunicació amb Supervisor](https://contributors.home-assistant.io/apps/guides/communication/), [Safari 9 segons Apple](https://developer.apple.com/library/archive/releasenotes/General/WhatsNewInSafari/Articles/Safari_9_0.html).

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Glass Rooms: config-driven inventory, fail-closed controls and a private HA API bridge.
 
-Only Python's standard library is required. Never log requests, headers, bodies,
+Runtime dependencies are Python's standard library and the pinned websockets client. Never log requests, headers, bodies,
 upstream responses, exception text or credentials. The Supervisor token stays
 inside this process. No action is retried automatically.
 """
@@ -25,6 +25,10 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib import error, parse, request
+try:
+    from websockets.sync.client import connect as websocket_connect
+except ImportError:
+    websocket_connect = None
 
 try:
     from .catalog import BY_ID, CATALOG, ROOMS, ROOM_IDS, catalog_for
@@ -296,6 +300,47 @@ class HAClient:
     def call(self, domain, service, payload):
         self._request("/services/" + domain + "/" + service, payload)
 
+    def watch_states(self, entity_ids, on_state_change, on_connection, stop_event):
+        retry = 2
+        while not stop_event.is_set():
+            connected = False
+            try:
+                with websocket_connect("ws://supervisor/core/websocket", open_timeout=8,
+                                       ping_interval=20, ping_timeout=20, close_timeout=2,
+                                       max_size=4 * 1024 * 1024, compression=None,
+                                       proxy=False) as websocket:
+                    greeting = json.loads(websocket.recv(timeout=8))
+                    if not isinstance(greeting, dict) or greeting.get("type") != "auth_required":
+                        raise ValueError("Invalid WebSocket greeting")
+                    websocket.send(json.dumps({"type": "auth", "access_token": self._token}))
+                    auth = json.loads(websocket.recv(timeout=8))
+                    if not isinstance(auth, dict) or auth.get("type") != "auth_ok":
+                        raise ValueError("Home Assistant WebSocket authentication failed")
+                    websocket.send(json.dumps({"id": 2, "type": "subscribe_entities",
+                                               "entity_ids": sorted(entity_ids)}))
+                    subscription = json.loads(websocket.recv(timeout=8))
+                    if not isinstance(subscription, dict) or subscription.get("id") != 2 or subscription.get("success") is not True:
+                        raise ValueError("Home Assistant state subscription failed")
+                    connected = True
+                    retry = 2
+                    on_connection(True)
+                    while not stop_event.is_set():
+                        try:
+                            message = json.loads(websocket.recv(timeout=1))
+                        except TimeoutError:
+                            continue
+                        if isinstance(message, dict) and message.get("type") == "event" and message.get("id") == 2:
+                            on_state_change(None)
+            except Exception:
+                # Reconnect quietly; never include upstream messages or credentials in logs.
+                pass
+            finally:
+                if connected:
+                    on_connection(False)
+            if not stop_event.is_set():
+                stop_event.wait(retry)
+                retry = min(retry * 2, 30)
+
 
 def filtered_attributes(domain, raw):
     """Never pass arbitrary HA attributes (tokens, pictures, URLs, codes) through."""
@@ -536,6 +581,41 @@ class App:
         self.action_lock = threading.Lock()
         self.rejected_states = {}
         self.rejected_states_lock = threading.Lock()
+        self.state_updates = threading.Condition()
+        self.state_revision = 0
+        self.live_updates = False
+        self.state_listener_stop = threading.Event()
+        self.state_listener_thread = None
+
+    def signal_state_update(self):
+        with self.state_updates:
+            self.state_revision += 1
+            self.state_updates.notify_all()
+
+    def set_live_updates(self, connected):
+        if self.live_updates != connected:
+            self.live_updates = connected
+            self.signal_state_update()
+
+    def wait_for_state_update(self, revision, timeout=20):
+        with self.state_updates:
+            self.state_updates.wait_for(lambda: self.state_revision > revision, timeout=timeout)
+            return self.state_revision
+
+    def start_state_listener(self):
+        if (self.settings.preview or not self.client or not hasattr(self.client, "watch_states")
+                or websocket_connect is None or not self.settings.by_id):
+            return
+        self.state_listener_thread = threading.Thread(
+            target=self.client.watch_states,
+            args=(set(self.settings.by_id), self.signal_state_update, self.set_live_updates, self.state_listener_stop),
+            name="home-assistant-state-websocket", daemon=True)
+        self.state_listener_thread.start()
+
+    def stop_state_listener(self):
+        self.state_listener_stop.set()
+        with self.state_updates:
+            self.state_updates.notify_all()
 
     def apply_rejected_states(self, entities, connected):
         if not connected:
@@ -610,6 +690,7 @@ class App:
         entities = entities_for(states, services, self.settings, connected or self.settings.demo_lights)
         self.apply_rejected_states(entities, connected)
         result = {"connected": connected, "preview": self.settings.preview, "demo": self.settings.demo_lights,
+                  "live_updates": self.live_updates,
                   "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat() if connected else None,
                   "error": failure, "version": version, "rooms": ROOMS,
                   "transport": self.settings.scheme,
@@ -802,7 +883,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def dispatch_get(self):
         self.guard()
-        path = parse.urlsplit(self.path).path
+        parsed_path = parse.urlsplit(self.path)
+        path = parsed_path.path
         if path == "/api/session":
             _, session = self.session(False)
             result = {"authenticated": bool(session), "preview": self.app.settings.preview}
@@ -815,6 +897,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.session()
             self.app.rate_limit(self.client_address[0], "read", 90, 60)
             self.reply(self.app.state(audit=path == "/api/audit"))
+            return
+        if path == "/api/updates":
+            if not self.app.settings.preview:
+                self.session()
+            query = parse.parse_qs(parsed_path.query, keep_blank_values=True)
+            values = query.get("since", [])
+            if set(query) != {"since"} or len(values) != 1 or not re.fullmatch(r"[0-9]{1,18}", values[0]):
+                raise PublicError("La revisió d'actualització no és vàlida.")
+            self.connection.settimeout(30)
+            revision = self.app.wait_for_state_update(int(values[0]), timeout=20)
+            self.reply({"revision": revision, "live_updates": self.app.live_updates})
             return
         files = {"/": ("index.html", "text/html; charset=utf-8"),
                  "/index.html": ("index.html", "text/html; charset=utf-8"),
@@ -926,7 +1019,9 @@ def main():
             options.clear()
             raw = ""
             client = HAClient(os.environ.get("SUPERVISOR_TOKEN"))
-        server = Server(("0.0.0.0" if args.lan_preview or not args.preview else "127.0.0.1", args.port), App(settings, client))
+        app = App(settings, client)
+        app.start_state_listener()
+        server = Server(("0.0.0.0" if args.lan_preview or not args.preview else "127.0.0.1", args.port), app)
         if settings.tls_cert:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -946,6 +1041,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        server.app.stop_state_listener()
         server.server_close()
     return 0
 

@@ -27,7 +27,8 @@
   var state = {connected:false,preview:false,entities:[],fetched_at:null};
   var currentView = 'rooms', csrf = '', authenticated = false, loading = false, busy = false;
   var pollTimer = null, toastTimer = null, modal = null, previousFocus = null, theme = 'auto', glass = false;
-  var POLL_INTERVAL = 2000;
+  var updateXhr = null, updateRetryTimer = null, updateRevision = 0, updateGeneration = 0, pendingUpdate = false;
+  var POLL_INTERVAL = 30000;
   var suppressRoomClickUntil = 0;
   var $ = function (id) { return document.getElementById(id); };
   function el(tag, cls, text) { var n=document.createElement(tag); if(cls) { n.className=cls; } if(text!==undefined) { n.textContent=text; } return n; }
@@ -59,10 +60,10 @@
     applyTheme();
   }
   function toast(message) { clearTimeout(toastTimer); $('toast').textContent=message; $('toast').className='toast'; toastTimer=setTimeout(function() { $('toast').className='toast hidden'; },6000); }
-  function request(method,path,body,callback) {
+  function request(method,path,body,callback,timeout) {
     var xhr=new XMLHttpRequest(), done=false;
     function finish(error,data,status) { if(done) { return; } done=true; callback(error,data,status); }
-    xhr.open(method,path,true); xhr.timeout=15000;
+    xhr.open(method,path,true); xhr.timeout=timeout||15000;
     if(method==='POST') { xhr.setRequestHeader('Content-Type','application/json'); if(csrf) { xhr.setRequestHeader('X-CSRF-Token',csrf); } }
     xhr.onreadystatechange=function() {
       if(xhr.readyState!==4) { return; }
@@ -73,6 +74,7 @@
     xhr.onerror=function() { finish('No hi ha connexió amb el servidor.',null,0); };
     xhr.ontimeout=function() { finish('El servidor no ha respost a temps.',null,0); };
     xhr.send(body?JSON.stringify(body):null);
+    return xhr;
   }
   function byCategory(category) { var result=[],i; for(i=0;i<state.entities.length;i++) { if(state.entities[i].category===category) { result.push(state.entities[i]); } } return result; }
   function byRoom(room) { var result=[],i; for(i=0;i<state.entities.length;i++) { if(state.entities[i].room===room) { result.push(state.entities[i]); } } return result; }
@@ -296,10 +298,10 @@
     [{id:'auto',name:'Automàtic'},{id:'day',name:'Dia'},{id:'night',name:'Nit'}].forEach(function(choice) { var b=button(choice.name,theme===choice.id?'selected':'',function() { theme=choice.id; storePreference(); applyTheme(); openSettings(); }); b.setAttribute('aria-pressed',theme===choice.id?'true':'false'); segmented.appendChild(b); });
     section.appendChild(segmented); section.appendChild(el('p','muted','Automàtic: dia de 7 a 20 h, segons el rellotge de l’iPad.')); parent.appendChild(section);
     section=el('div','settings-section'); section.appendChild(el('h3','','Una vista lleugera')); var label=el('label','check-label'), check=el('input'); check.type='checkbox'; check.checked=glass; on(check,'change',function() { glass=check.checked; storePreference(); applyTheme(); }); label.appendChild(check); label.appendChild(document.createTextNode('Activa el contrast suau')); section.appendChild(label); section.appendChild(el('p','muted','Superfícies sense desenfocament, adaptades a Safari d’iOS 9.3.5.')); parent.appendChild(section);
-    section=el('div','settings-section'); section.appendChild(el('h3','','Connexió')); section.appendChild(el('p','muted',state.demo?'Previsualització amb llums ficticis. No hi ha connexió amb Home Assistant ni controls actius.':(state.preview?'Previsualització local. No hi ha dades de Home Assistant ni controls actius.':(state.connected?'Home Assistant connectat.':'Pendent de connectar amb Home Assistant.')))); section.appendChild(el('p','muted',window.location.protocol==='https:'?'Transport HTTPS.':'Transport HTTP local, sense xifrat.'));
+    section=el('div','settings-section'); section.appendChild(el('h3','','Connexió')); section.appendChild(el('p','muted',state.demo?'Previsualització amb llums ficticis. No hi ha connexió amb Home Assistant ni controls actius.':(state.preview?'Previsualització local. No hi ha dades de Home Assistant ni controls actius.':(state.connected?'Home Assistant connectat.':'Pendent de connectar amb Home Assistant.')))); section.appendChild(el('p','muted',state.live_updates?'Canvis d’estat en directe actius.':(state.connected?'Connexió d’esdeveniments reconnectant; comprovació de seguretat cada 30 segons.':'Esperant la connexió d’esdeveniments.'))); section.appendChild(el('p','muted',window.location.protocol==='https:'?'Transport HTTPS.':'Transport HTTP local, sense xifrat.'));
     section.appendChild(button('Comprova la connexió','action-button',function() { refresh(true); })); section.appendChild(button('Informe de verificació','action-button',showAudit));
     if(authenticated&&!state.preview) { section.appendChild(button('Tanca la sessió','action-button',function() { request('POST','./api/logout',{},function(error) { if(error) { toast(error); return; } requireLogin(); }); })); }
-    parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.0.10 · Il·lustracions conceptuals. Estat actualitzat automàticament cada 2 segons mentre la pàgina és visible.'));
+    parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.0.11 · Estat en directe via WebSocket de Home Assistant.'));
   }
   function showAudit() {
     var parent=openModal('Verificació','CONNEXIÓ I CAPACITATS','audit','audit'); parent.appendChild(el('p','info-box','Informe de lectura per completar la configuració. No inclou credencials.')); var output=el('pre','audit-json','Carregant…'); parent.appendChild(output);
@@ -315,20 +317,41 @@
     else if(modal.type==='alarm'&&!state.connected) { openCategory('security','Seguretat'); }
     $('modal-content').scrollTop=scroll;
   }
+  function stopUpdateListener() {
+    updateGeneration++; clearTimeout(updateRetryTimer); updateRetryTimer=null;
+    if(updateXhr) {
+      var xhr=updateXhr; updateXhr=null;
+      xhr.onreadystatechange=null; xhr.onerror=null; xhr.ontimeout=null; xhr.abort();
+    }
+  }
+  function listenForUpdates() {
+    if(updateXhr||document.hidden||!authenticated||state.preview) { return; }
+    var generation=updateGeneration;
+    updateXhr=request('GET','./api/updates?since='+updateRevision,null,function(error,data,status) {
+      if(generation!==updateGeneration) { return; }
+      updateXhr=null;
+      if(status===401) { requireLogin(); return; }
+      if(error) { updateRetryTimer=setTimeout(listenForUpdates,2000); return; }
+      var revision=data&&Number(data.revision);
+      if(isFinite(revision)&&revision>updateRevision) { updateRevision=revision; refresh(false); }
+      listenForUpdates();
+    },30000);
+  }
   function schedulePoll() { clearTimeout(pollTimer); if(!document.hidden&&(authenticated||state.preview)) { pollTimer=setTimeout(function() { refresh(false); },POLL_INTERVAL); } }
   function refresh(force) {
-    if(loading) { return; } if(!authenticated&&!state.preview) { session(); return; }
+    if(loading) { pendingUpdate=true; return; } if(!authenticated&&!state.preview) { session(); return; }
     loading=true;
     request('GET','./api/state',null,function(error,data,status) {
       loading=false;
       if(status===401) { requireLogin(); return; }
       if(error) { state.connected=false; state.error=error; state.fetched_at=null; if(force) { toast(error); } }
       else { state=data; state.entities=state.entities||[]; }
-      renderView(); refreshModal(); schedulePoll();
+      renderView(); refreshModal(); schedulePoll(); listenForUpdates();
+      if(pendingUpdate) { pendingUpdate=false; refresh(false); }
     });
   }
   function requireLogin() {
-    authenticated=false; csrf=''; clearTimeout(pollTimer); closeModal(); state={connected:false,preview:false,entities:[],fetched_at:null}; renderView();
+    authenticated=false; csrf=''; clearTimeout(pollTimer); stopUpdateListener(); updateRevision=0; closeModal(); state={connected:false,preview:false,entities:[],fetched_at:null}; renderView();
     $('login-layer').className='login-layer'; $('panel-password').value='';
     $('login-transport').textContent=window.location.protocol==='https:'?'Connexió HTTPS.':'Aquesta connexió HTTP no xifra la contrasenya. Configura HTTPS abans d’utilitzar credencials reals.';
     $('panel-password').focus();
@@ -381,8 +404,8 @@
       if(down) { suppressRoomClickUntil=Date.now()+800; navigate('overview'); }
     });
     on($('main'),'touchcancel',function() { start=null; });
-    on(document,'visibilitychange',function() { if(document.hidden) { clearTimeout(pollTimer); if($('alarm-code')) { $('alarm-code').value=''; } } else { clockTick(); refresh(false); } });
-    on(window,'pageshow',function(event) { if(event.persisted) { csrf=''; authenticated=false; if($('alarm-code')) { $('alarm-code').value=''; } session(); } });
+    on(document,'visibilitychange',function() { if(document.hidden) { clearTimeout(pollTimer); stopUpdateListener(); if($('alarm-code')) { $('alarm-code').value=''; } } else { clockTick(); refresh(false); listenForUpdates(); } });
+    on(window,'pageshow',function(event) { if(event.persisted) { stopUpdateListener(); csrf=''; authenticated=false; updateRevision=0; if($('alarm-code')) { $('alarm-code').value=''; } session(); } });
   }
   function init() {
     try { var pref=JSON.parse(window.localStorage.getItem('glass-rooms-appearance')||'null'); if(pref) { if(pref.theme==='auto'||pref.theme==='day'||pref.theme==='night') { theme=pref.theme; } glass=pref.glass===true; } } catch(ignore) {}
@@ -395,10 +418,10 @@
     init();
     var cssReady=window.getComputedStyle && window.getComputedStyle($('css-probe'),null).width==='9px';
     if(cssReady) { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.done(); } else { $('boot-status').hidden=true; } }
-    else { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail('B4 · CSS no aplicat'); } else { $('boot-status').textContent='Glass Rooms 1.0.10: no s’ha carregat style.css.'; } }
+    else { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail('B4 · CSS no aplicat'); } else { $('boot-status').textContent='Glass Rooms 1.0.11: no s’ha carregat style.css.'; } }
   } catch(startupError) {
     if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail(startupError.name || 'Error'); return; }
     $('boot-status').hidden=false;
-    $('boot-status').textContent='Glass Rooms 1.0.10: no s’ha pogut iniciar la interfície. Torna a carregar la pàgina i comprova que tots els fitxers són de la mateixa versió.';
+    $('boot-status').textContent='Glass Rooms 1.0.11: no s’ha pogut iniciar la interfície. Torna a carregar la pàgina i comprova que tots els fitxers són de la mateixa versió.';
   }
 }());
