@@ -105,16 +105,17 @@
       var wrap=el('div','room-wrap'), card=button('','room-card',function() { if(Date.now()>=suppressRoomClickUntil) { openRoom(room.id); } });
       card.appendChild(el('h3','room-title',room.name));
       var art=el('img','room-art'); art.src='./assets/'+room.id+'.svg'; art.alt=''; art.setAttribute('aria-hidden','true'); card.appendChild(art);
-      var entities=byRoom(room.id), known=0, issues=0, lights=0, lit=false, roomLights=[], canToggle=true, toggleAction, i;
+      var entities=byRoom(room.id), known=0, issues=0, lights=0, unavailableLights=0, lit=false, roomLights=[], canToggle=true, toggleAction, i;
       for(i=0;i<entities.length;i++) {
         if(entities[i].status==='ok') { known++; } else { issues++; }
         if(entities[i].domain==='light') {
           lights++;
           roomLights.push(entities[i]);
+          if(entities[i].status==='unavailable') { unavailableLights++; }
           if(entities[i].status==='ok'&&entities[i].state==='on') { lit=true; }
         }
       }
-      card.setAttribute('aria-label','Obre '+room.name+(lights?(lit?', amb llums encesos':', llums apagats o no disponibles'):''));
+      card.setAttribute('aria-label','Obre '+room.name+(lights?(lit?', amb llums encesos':', llums apagats')+(unavailableLights?', '+unavailableLights+' '+(unavailableLights===1?'llum no disponible':'llums no disponibles'):''):''));
       if(lights) {
         card.className+=' '+(lit?'room-lit':'room-dark');
         toggleAction=lit?'turn_off':'turn_on';
@@ -131,7 +132,7 @@
         badge.setAttribute('title',badge.disabled?'Control pendent de connexió o verificació':(lit?'Apaga':'Encén')+' totes les llums de '+room.name);
         badge.appendChild(icon(lit?'lightOn':'light'));
       }
-      var msg=entities.length?((state.connected||state.demo)?known+' amb estat'+(issues?' · '+issues+' pendents':''):'Sense connexió'):'Ubicació pendent';
+      var msg=entities.length?((state.connected||state.demo)?known+' amb estat'+(unavailableLights?' · '+unavailableLights+' '+(unavailableLights===1?'llum no disponible':'llums no disponibles'):'')+(issues>unavailableLights?' · '+(issues-unavailableLights)+' pendents':''):'Sense connexió'):'Ubicació pendent';
       var meta=el('div','room-meta'+(issues?' has-issue':'')); meta.appendChild(el('span','status-dot')); meta.appendChild(document.createTextNode(msg)); card.appendChild(meta);
       wrap.appendChild(card); if(lights) { wrap.appendChild(badge); } grid.appendChild(wrap);
     }); parent.appendChild(grid);
@@ -266,6 +267,7 @@
     var i;
     if(busy||!state.connected||state.preview||!lights.length) { return; }
     for(i=0;i<lights.length;i++) {
+      if(lights[i].status!=='ok') { toast('No es pot canviar l’estat: hi ha un llum no disponible.'); return; }
       var controls=lights[i].controls||[], ready=false, j;
       for(j=0;j<controls.length;j++) { if(controls[j].action===action&&controls[j].enabled) { ready=true; break; } }
       if(!ready) { toast('L’ordre per a aquesta habitació encara no està verificada.'); return; }
@@ -296,7 +298,7 @@
     section=el('div','settings-section'); section.appendChild(el('h3','','Connexió')); section.appendChild(el('p','muted',state.demo?'Previsualització amb llums ficticis. No hi ha connexió amb Home Assistant ni controls actius.':(state.preview?'Previsualització local. No hi ha dades de Home Assistant ni controls actius.':(state.connected?'Home Assistant connectat.':'Pendent de connectar amb Home Assistant.')))); section.appendChild(el('p','muted',window.location.protocol==='https:'?'Transport HTTPS.':'Transport HTTP local, sense xifrat.'));
     section.appendChild(button('Comprova la connexió','action-button',function() { refresh(true); })); section.appendChild(button('Informe de verificació','action-button',showAudit));
     if(authenticated&&!state.preview) { section.appendChild(button('Tanca la sessió','action-button',function() { request('POST','./api/logout',{},function(error) { if(error) { toast(error); return; } requireLogin(); }); })); }
-    parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.0.7 · Il·lustracions conceptuals. La correspondència amb les habitacions, els grups i els controls es confirma durant la instal·lació.'));
+    parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.0.8 · Il·lustracions conceptuals. La correspondència amb les habitacions, els grups i els controls es confirma durant la instal·lació.'));
   }
   function showAudit() {
     var parent=openModal('Verificació','CONNEXIÓ I CAPACITATS','audit','audit'); parent.appendChild(el('p','info-box','Informe de lectura per completar la configuració. No inclou credencials.')); var output=el('pre','audit-json','Carregant…'); parent.appendChild(output);
@@ -392,10 +394,10 @@
     init();
     var cssReady=window.getComputedStyle && window.getComputedStyle($('css-probe'),null).width==='9px';
     if(cssReady) { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.done(); } else { $('boot-status').hidden=true; } }
-    else { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail('B4 · CSS no aplicat'); } else { $('boot-status').textContent='Glass Rooms 1.0.7: no s’ha carregat style.css.'; } }
+    else { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail('B4 · CSS no aplicat'); } else { $('boot-status').textContent='Glass Rooms 1.0.8: no s’ha carregat style.css.'; } }
   } catch(startupError) {
     if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail(startupError.name || 'Error'); return; }
     $('boot-status').hidden=false;
-    $('boot-status').textContent='Glass Rooms 1.0.7: no s’ha pogut iniciar la interfície. Torna a carregar la pàgina i comprova que tots els fitxers són de la mateixa versió.';
+    $('boot-status').textContent='Glass Rooms 1.0.8: no s’ha pogut iniciar la interfície. Torna a carregar la pàgina i comprova que tots els fitxers són de la mateixa versió.';
   }
 }());
