@@ -1,7 +1,7 @@
 name: Glass Rooms
-version: "1.0.5"
+version: "1.0.6"
 breaking_versions:
-  - "1.0.5"
+  - "1.0.6"
 slug: glass_rooms
 description: "Panell local per a iPad amb inventari i controls configurables"
 arch:
