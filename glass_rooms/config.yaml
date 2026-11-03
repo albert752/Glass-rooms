@@ -1,7 +1,8 @@
 name: Glass Rooms
-version: "1.0.12"
+version: "1.1.0"
 breaking_versions:
   - "1.0.11"
+  - "1.1.0"
 slug: glass_rooms
 description: "Panell local per a iPad amb inventari i controls configurables"
 arch:
@@ -24,7 +25,7 @@ map:
 options:
   light_entity_ids: []
   entity_ids: []
-  panel_password: ""
+  panel_pin: ""
   allowed_hosts: []
   allowed_networks: []
   verified_actions: []
@@ -39,7 +40,7 @@ schema:
     - str
   entity_ids:
     - str
-  panel_password: password
+  panel_pin: password
   allowed_hosts:
     - str
   allowed_networks:

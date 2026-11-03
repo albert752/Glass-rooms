@@ -138,8 +138,8 @@ class Settings:
         self.arm_code = "unknown"
         self.disarm_code = "unknown"
         self.tls_cert = self.tls_key = None
-        self.password_salt = secrets.token_bytes(32)
-        self.password_hash = b""
+        self.pin_salt = secrets.token_bytes(32)
+        self.pin_hash = b""
         self.catalog = CATALOG
         self.by_id = {item["entity_id"]: item for item in self.catalog}
         if preview:
@@ -157,15 +157,15 @@ class Settings:
             return
         if not isinstance(options, dict):
             raise ValueError("Les opcions han de ser un objecte JSON.")
-        known = {"panel_password", "allowed_hosts", "allowed_networks", "verified_actions", "room_assignments",
+        known = {"panel_pin", "allowed_hosts", "allowed_networks", "verified_actions", "room_assignments",
                  "light_entity_ids", "entity_ids",
                  "alarm_modes", "alarm_arm_code", "alarm_disarm_code", "tls_certfile", "tls_keyfile"}
         if set(options) - known:
             raise ValueError("Hi ha opcions desconegudes; reviseu la configuració.")
-        password = options.get("panel_password", "")
-        if not isinstance(password, str) or not 12 <= len(password) <= 256:
-            raise ValueError("Configureu panel_password privat, de 12 a 256 caràcters.")
-        self.password_hash = self.password_digest(password)
+        pin = options.get("panel_pin", "")
+        if not isinstance(pin, str) or not re.fullmatch(r"[0-9]{6,8}", pin):
+            raise ValueError("Configureu panel_pin privat, de 6 a 8 dígits.")
+        self.pin_hash = self.pin_digest(pin)
         self.allowed_hosts = {authority(v) for v in list_option(options, "allowed_hosts")}
         if not self.allowed_hosts:
             raise ValueError("Configureu allowed_hosts amb l'adreça exacta i el port del panell.")
@@ -228,12 +228,12 @@ class Settings:
     def scheme(self):
         return "https" if self.tls_cert else "http"
 
-    def password_digest(self, password):
-        return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), self.password_salt, 200000)
+    def pin_digest(self, pin):
+        return hashlib.pbkdf2_hmac("sha256", pin.encode("ascii"), self.pin_salt, 200000)
 
-    def check_password(self, password):
-        return isinstance(password, str) and 12 <= len(password) <= 256 and hmac.compare_digest(
-            self.password_hash, self.password_digest(password))
+    def check_pin(self, pin):
+        return isinstance(pin, str) and bool(re.fullmatch(r"[0-9]{6,8}", pin)) and hmac.compare_digest(
+            self.pin_hash, self.pin_digest(pin))
 
     def allows_client(self, address):
         try:
@@ -735,6 +735,40 @@ class App:
                 body.pop("code", None)
         return {"ok": True, "message": "Ordre enviada; pendent de confirmar estat."}
 
+    def lights_action(self, body):
+        if self.settings.preview:
+            raise PublicError("La previsualització és només de lectura.", 403)
+        if not isinstance(body, dict) or set(body) != {"entity_ids", "action"}:
+            raise PublicError("La petició de llums conté camps no admesos.")
+        ids, action = body["entity_ids"], body["action"]
+        if (not isinstance(ids, list) or not 1 <= len(ids) <= 256
+                or any(not isinstance(entity_id, str) for entity_id in ids)
+                or len(set(ids)) != len(ids) or not isinstance(action, str)
+                or action not in {"turn_on", "turn_off"}):
+            raise PublicError("La llista de llums o l'acció és invàlida.")
+        if any(self.settings.by_id.get(entity_id, {}).get("domain") != "light" for entity_id in ids):
+            raise PublicError("Només es poden controlar llums configurats.", 403)
+        with self.action_lock:
+            states, services, _ = self.client.snapshot(self.settings.by_id)
+            entities = {item["entity_id"]: item for item in entities_for(states, services, self.settings, True)}
+            self.apply_rejected_states(entities.values(), True)
+            calls = []
+            for entity_id in ids:
+                entity = entities[entity_id]
+                service, payload = action_payload(entity, {"entity_id": entity_id, "action": action})
+                calls.append((entity, service, payload))
+            succeeded, first_error = 0, None
+            for entity, service, payload in calls:
+                try:
+                    self.client.call(entity["domain"], service, payload)
+                    succeeded += 1
+                except PublicError as exc:
+                    self.mark_rejected_state(entity)
+                    if first_error is None:
+                        first_error = exc.message
+        return {"ok": first_error is None, "succeeded": succeeded, "failed": len(ids) - succeeded,
+                "error": first_error}
+
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
@@ -935,13 +969,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.app.settings.preview:
             raise PublicError("La previsualització és només de lectura.", 403)
         path = parse.urlsplit(self.path).path
-        if path not in {"/api/login", "/api/logout", "/api/action"}:
+        if path not in {"/api/login", "/api/logout", "/api/action", "/api/lights"}:
             raise PublicError("Recurs no trobat.", 404)
         if path == "/api/login":
             self.app.rate_limit(self.client_address[0], "login", 5, 60)
             body = self.read_json()
-            if set(body) != {"password"} or not self.app.settings.check_password(body.get("password")):
-                raise PublicError("Contrasenya incorrecta.", 401)
+            if set(body) != {"pin"} or not self.app.settings.check_pin(body.get("pin")):
+                raise PublicError("PIN incorrecte.", 401)
             previous, _ = self.session(False)
             with self.app.lock:
                 self.app.sessions.pop(previous, None)
@@ -960,8 +994,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.app.sessions.pop(token, None)
             self.reply({"authenticated": False}, cookie=self.cookie("", expire=True))
             return
-        self.app.rate_limit(self.client_address[0], "action", 30, 60)
-        self.reply(self.app.action(body))
+        item = self.app.settings.by_id.get(body.get("entity_id")) if isinstance(body, dict) and isinstance(body.get("entity_id"), str) else None
+        action = body.get("action") if isinstance(body, dict) else None
+        light_toggle = path == "/api/lights" or (item and item["domain"] == "light" and isinstance(action, str) and action in {"turn_on", "turn_off"})
+        self.app.rate_limit(self.client_address[0], "light_action" if light_toggle else "action", 120 if light_toggle else 30, 60)
+        self.reply(self.app.lights_action(body) if path == "/api/lights" else self.app.action(body))
 
     def do_GET(self):
         self.execute(self.dispatch_get)

@@ -17,7 +17,7 @@ Home Assistant Core → integracions → dispositius
 
 ## Límits d'accés
 
-El navegador no parla directament amb l'API de Core. El servidor consulta estats, serveis i la versió, i manté una subscripció WebSocket limitada als IDs configurats. Els canvis desperten una consulta XHR de llarga espera del navegador; si la subscripció cau, es torna a consultar l'estat cada 30 segons. El servidor retorna només el catàleg i els atributs seleccionats i torna a llegir les capacitats abans d'enviar cada ordre. Una crida acceptada es mostra com a «pendent de confirmar estat»; no es modifica l'estat visual de manera optimista. No hi ha reintents automàtics d'ordres.
+El navegador no parla directament amb l'API de Core. El servidor consulta estats, serveis i la versió, i manté una subscripció WebSocket limitada als IDs configurats. Els canvis desperten una consulta XHR de llarga espera del navegador; si la subscripció cau, es torna a consultar l'estat cada 30 segons. El servidor retorna només el catàleg i els atributs seleccionats i torna a llegir les capacitats abans d'enviar cada ordre. El control d'una habitació o de tots els llums arriba en una sola petició; el servidor verifica cada llum i després envia les ordres corresponents a Home Assistant. No es modifica l'estat visual de manera optimista ni es reintenten les ordres automàticament. Les errades parcials es mostren al panell.
 
 Els sensors `sensor.*` configurats amb `device_class` `temperature` o `humidity` formen la categoria Clima. La interfície els agrupa segons `room_assignments` i mostra totes les lectures d'una habitació, amb la unitat publicada per Home Assistant. Els sensors sense assignació apareixen separats. Aquesta categoria només consulta estats i no habilita cap ordre.
 
@@ -25,9 +25,9 @@ Una acció necessita tres comprovacions: capacitat actual publicada, servei disp
 
 El token de Supervisor té accés ampli a Core. La restricció per entitat és una responsabilitat del servidor, no un permís individual concedit per Home Assistant. L'app no sol·licita l'API de Supervisor, Docker, xarxa de l'amfitrió, dispositius, ni desactivació de protecció. No és un proxy d'accions arbitràries.
 
-La contrasenya del panell queda en les opcions privades de Supervisor; en memòria es comprova amb PBKDF2. Les sessions aleatòries caduquen al cap de 12 hores i es perden en reiniciar; estan lligades a la IP del client. La cookie és HttpOnly, `SameSite=Strict` i `Secure` si hi ha TLS. El client només rep un nonce CSRF temporal. iOS 9 pot ignorar SameSite: el servidor exigeix també origen exacte o Referer del mateix origen, JSON i nonce. No accepta capçaleres de proxy com a prova de xarxa o transport.
+El PIN del panell queda en les opcions privades de Supervisor; en memòria es comprova amb PBKDF2. Les sessions aleatòries caduquen al cap de 12 hores i es perden en reiniciar; estan lligades a la IP del client. La cookie és HttpOnly, `SameSite=Strict` i `Secure` si hi ha TLS. El client només rep un nonce CSRF temporal. iOS 9 pot ignorar SameSite: el servidor exigeix també origen exacte o Referer del mateix origen, JSON i nonce. No accepta capçaleres de proxy com a prova de xarxa o transport.
 
-Els logs no inclouen cossos, PINs, capçaleres ni respostes de Core. El PIN es buida del camp abans de transmetre i no es desa en preferències ni en el servidor. `localStorage` només conté el tema i la preferència de vidre; si no funciona, la interfície continua amb els valors predeterminats. Les API, l'HTML, el CSS i el JavaScript se serveixen amb `no-store`; les il·lustracions SVG públiques es conserven un dia i porten una versió a l'URL per renovar-les en actualitzar el panell. La contrasenya i el PIN encara necessiten HTTPS per protegir el transport.
+Els logs no inclouen cossos, PINs, capçaleres ni respostes de Core. El PIN d'accés es buida de la interfície abans de transmetre'l i no es desa en preferències; el PIN d'alarma es buida del seu camp abans de transmetre'l. `localStorage` només conté el tema i la preferència de vidre; si no funciona, la interfície continua amb els valors predeterminats. Les API, l'HTML, el CSS i el JavaScript se serveixen amb `no-store`; les il·lustracions SVG públiques es conserven un dia i porten una versió a l'URL per renovar-les en actualitzar el panell. Els PINs encara necessiten HTTPS per protegir el transport.
 
 ## Eleccions per a Safari d'iOS 9
 
@@ -39,7 +39,7 @@ Els logs no inclouen cossos, PINs, capçaleres ni respostes de Core. El PIN es b
 | Disposició | Floats, blocs i posició fixa; controls sense flexbox | Sense CSS Grid, variables CSS o gap necessaris |
 | Vidre | Superfícies clares sense desenfocament per defecte | Sense desenfocament a la revisió 1.0.1; superfícies opaques |
 | Il·lustracions | Vuit SVG locals petits, sense filtres costosos | No són plànols ni ubicacions de dispositius |
-| Navegació | Botons grans, resum visible, finestres, gest vertical | El botó del resum evita dependre del gest |
+| Navegació | Botons grans, resum visible i finestres | El canvi de secció es fa amb els botons del menú |
 | Dia/nit | Hora local del navegador: dia entre 7 i 20 h | Es pot triar manualment; no es pressuposa la sortida o posta solar |
 | Fonts | Tipografia del sistema | No hi ha descàrregues externes |
 

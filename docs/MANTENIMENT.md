@@ -6,7 +6,7 @@
 |---|---|
 | L'app no apareix a la botiga | Una sola carpeta `glass_rooms` dins de `local_apps` o `addons`, amb `config.yaml` al primer nivell; comprova actualitzacions i refresca la botiga. |
 | La imatge no es construeix | Revisa arquitectura amd64/aarch64, xarxa sortint cap al registre, espai lliure i el registre de Supervisor. No s'ha provat aquesta construcció a la teva instància. |
-| No arrenca | Completa contrasenya privada de 12–256 caràcters, hosts i xarxes; revisa parelles d'accions, assignacions, polítiques Alarmo i fitxers TLS. Un error d'opcions es mostra sense el contingut secret. |
+| No arrenca | Completa `panel_pin` privat de 6–8 dígits, hosts i xarxes; revisa parelles d'accions, assignacions, polítiques Alarmo i fitxers TLS. Un error d'opcions es mostra sense el contingut secret. |
 | Host no autoritzat | L'adreça i el port de la URL han de coincidir amb `allowed_hosts`. La URL de Core `:8080` no és la del panell `:8099`. |
 | Xarxa no autoritzada | Revisa la màscara real i la IP del client; no afegeixis una xarxa pública o totes les adreces. El servidor ignora `X-Forwarded-For`. |
 | No hi ha connexió amb Core | Comprova Core i Supervisor, `homeassistant_api: true`, reinicia l'app. No afegeixis un token al navegador. |
@@ -42,7 +42,7 @@ Restaurar el codi no desfà ordres ja executades als dispositius. Si una escena 
 2. Atura Glass Rooms, desactiva l'inici automàtic i desinstal·la l'app des de Home Assistant. Això atura el port i elimina les sessions en memòria.
 3. Retira la carpeta font local quan hagis conservat allò necessari per a una reversió. Revisa les còpies que continguin opcions privades i elimina-les segons la teva política de còpies.
 4. Elimina del router o tallafoc qualsevol regla específica que haguessis afegit. No hi hauria d'haver ports WAN. Si havies instal·lat un certificat o clau exclusius d'aquest panell, retira'ls només després de comprovar que no els usa cap altre servei.
-5. A l'iPad, elimina l'accés directe i les dades d'aquest origen. Revisa si el navegador havia ofert desar la contrasenya i elimina aquesta entrada si existeix.
+5. A l'iPad, elimina l'accés directe i les dades d'aquest origen. Si el navegador havia desat la contrasenya antiga del panell, elimina aquesta entrada.
 
 No cal eliminar cap entitat, grup, escena o automatització de Home Assistant: Glass Rooms no en crea ni en reconfigura. No deixa tokens de llarga durada de l'usuari per revocar.
 

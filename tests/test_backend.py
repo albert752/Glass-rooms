@@ -30,7 +30,7 @@ SHOWERS = "sensor.test_showers"
 
 
 def config(**extra):
-    options = {"panel_password": secrets.token_urlsafe(24),
+    options = {"panel_pin": "12345678",
                "allowed_hosts": ["127.0.0.1:8099"],
                "allowed_networks": ["127.0.0.0/8"],
                "light_entity_ids": [LIGHT],
@@ -71,7 +71,7 @@ class FakeHA:
 
 class ConfigurationTests(unittest.TestCase):
     def test_defaults_refuse_to_start(self):
-        for options in [{}, config(panel_password=""), config(allowed_hosts=[]), config(allowed_networks=[])]:
+        for options in [{}, config(panel_pin=""), config(allowed_hosts=[]), config(allowed_networks=[])]:
             with self.subTest(options=list(options)):
                 with self.assertRaises(ValueError):
                     Settings(options)
@@ -115,12 +115,17 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(settings.scheme, "https")
         self.assertEqual(settings.tls_key, "/ssl/key.pem")
 
-    def test_password_is_hashed_not_retained(self):
+    def test_pin_is_hashed_not_retained(self):
         options = config()
         settings = Settings(options)
-        self.assertTrue(settings.check_password(options["panel_password"]))
-        self.assertFalse(settings.check_password(secrets.token_urlsafe(24)))
-        self.assertNotIn(options["panel_password"], repr(settings.__dict__))
+        self.assertTrue(settings.check_pin(options["panel_pin"]))
+        self.assertFalse(settings.check_pin("87654321"))
+        self.assertNotIn(options["panel_pin"], repr(settings.__dict__))
+        for invalid in ("12345", "123456789", "12a456", "１２３４５６", 123456):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                Settings(config(panel_pin=invalid))
+        with self.assertRaises(ValueError):
+            Settings(config(panel_password="old-secret-value"))
 
 
 class CapabilityTests(unittest.TestCase):
@@ -286,6 +291,44 @@ class ActionTests(unittest.TestCase):
         self.assertIn("pendent", result["message"])
         self.assertEqual(self.fake.calls, [("light", "turn_on", {"entity_id": LIGHT, "brightness": 160})])
 
+    def test_lights_action_batches_after_checking_every_light(self):
+        other = "light.test_other"
+        settings = Settings(config(light_entity_ids=[LIGHT, other],
+                                   verified_actions=[LIGHT + ":turn_off", other + ":turn_off"]))
+        fake = FakeHA({**raw(LIGHT), **raw(other)}, services("light", turn_on=[], turn_off=[]))
+        app = App(settings, fake)
+        result = app.lights_action({"entity_ids": [LIGHT, other], "action": "turn_off"})
+        self.assertEqual(result, {"ok": True, "succeeded": 2, "failed": 0, "error": None})
+        self.assertEqual(fake.reads, 1)
+        self.assertEqual([call[2]["entity_id"] for call in fake.calls], [LIGHT, other])
+        fake.calls.clear()
+        fake.states[other]["state"] = "unavailable"
+        with self.assertRaises(PublicError):
+            app.lights_action({"entity_ids": [LIGHT, other], "action": "turn_off"})
+        self.assertEqual(fake.calls, [])
+        class FailingHA(FakeHA):
+            def call(self, domain, service, payload):
+                if payload["entity_id"] == other:
+                    raise PublicError("La segona llum ha rebutjat l'ordre.", 503)
+                super().call(domain, service, payload)
+        failing = FailingHA({**raw(LIGHT), **raw(other)}, services("light", turn_off=[]))
+        partial = App(settings, failing).lights_action({"entity_ids": [LIGHT, other], "action": "turn_off"})
+        self.assertEqual(partial["succeeded"], 1)
+        self.assertEqual(partial["failed"], 1)
+        self.assertFalse(partial["ok"])
+        self.assertIn("segona llum", partial["error"])
+
+    def test_lights_action_rejects_invalid_batches(self):
+        for body in ({"entity_ids": [], "action": "turn_on"},
+                     {"entity_ids": [LIGHT, LIGHT], "action": "turn_on"},
+                     {"entity_ids": [ALARM], "action": "turn_on"},
+                     {"entity_ids": [LIGHT], "action": "toggle"},
+                     {"entity_ids": [LIGHT], "action": []},
+                     {"entity_ids": [LIGHT], "action": "turn_on", "code": "123456"}):
+            with self.subTest(body=body), self.assertRaises(PublicError):
+                self.app.lights_action(body)
+        self.assertEqual(self.fake.calls, [])
+
     def test_bad_payloads_do_not_reach_ha(self):
         for value in [False, "100", 0, 256, 12.5, float("nan"), float("inf"), [], {}]:
             with self.subTest(value=repr(value)), self.assertRaises(PublicError):
@@ -376,7 +419,7 @@ class HTTPTests(unittest.TestCase):
         return status, result, response_headers
 
     def login(self):
-        status, result, headers = self.call("/api/login", "POST", {"password": self.options["panel_password"]})
+        status, result, headers = self.call("/api/login", "POST", {"pin": self.options["panel_pin"]})
         self.assertEqual(status, 200)
         self.cookie = headers["Set-Cookie"].split(";", 1)[0]
         self.csrf = result["csrf"]
@@ -398,13 +441,19 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.call("/api/logout", "POST", {})[0], 200)
         self.assertEqual(self.call("/api/state")[0], 401)
 
+    def test_old_password_payload_does_not_log_in(self):
+        status, result, _ = self.call("/api/login", "POST", {"password": self.options["panel_pin"]})
+        self.assertEqual(status, 401)
+        self.assertEqual(result["error"], "PIN incorrecte.")
+        self.assertEqual(self.app.sessions, {})
+
     def test_host_and_network_guard_ignore_forwarded_headers(self):
         self.assertEqual(self.call("/api/session", headers={"Host": "evil.example"})[0], 403)
         self.app.settings.allowed_networks = []
         self.assertEqual(self.call("/api/session", headers={"X-Forwarded-For": "127.0.0.1"})[0], 403)
 
-    def test_cross_origin_login_is_blocked_even_with_valid_password(self):
-        status = self.call("/api/login", "POST", {"password": self.options["panel_password"]},
+    def test_cross_origin_login_is_blocked_even_with_valid_pin(self):
+        status = self.call("/api/login", "POST", {"pin": self.options["panel_pin"]},
                            {"Origin": "http://evil.example", "Referer": self.origin + "/"})[0]
         self.assertEqual(status, 403)
         self.assertEqual(self.app.sessions, {})
@@ -417,6 +466,17 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.fake.calls, [])
         self.assertEqual(self.call("/api/action", "POST", body)[0], 200)
         self.assertEqual(len(self.fake.calls), 1)
+
+    def test_light_batch_uses_one_rate_slot_and_requires_csrf(self):
+        self.login()
+        body = {"entity_ids": [LIGHT], "action": "turn_on"}
+        self.assertEqual(self.call("/api/lights", "POST", body, {"X-CSRF-Token": "incorrect"})[0], 403)
+        self.assertEqual(self.fake.calls, [])
+        for _ in range(35):
+            self.assertEqual(self.call("/api/lights", "POST", body)[0], 200)
+        for _ in range(35):
+            self.assertEqual(self.call("/api/action", "POST", {"entity_id": LIGHT, "action": "turn_on"})[0], 200)
+        self.assertEqual(len(self.fake.calls), 70)
 
     def test_safari_referer_fallback_and_json_requirement(self):
         self.login()
@@ -455,12 +515,12 @@ class HTTPTests(unittest.TestCase):
 
     def test_login_rate_limit_and_body_size_limit(self):
         for _ in range(5):
-            self.assertEqual(self.call("/api/login", "POST", {"password": "short"})[0], 401)
-        self.assertEqual(self.call("/api/login", "POST", {"password": "short"})[0], 429)
+            self.assertEqual(self.call("/api/login", "POST", {"pin": "000000"})[0], 401)
+        self.assertEqual(self.call("/api/login", "POST", {"pin": "000000"})[0], 429)
         self.app.attempts.clear()
-        self.assertEqual(self.call("/api/login", "POST", {"password": "x" * 5000})[0], 413)
+        self.assertEqual(self.call("/api/login", "POST", {"pin": "0" * 5000})[0], 413)
 
-    def test_http_does_not_print_password_pin_or_bodies(self):
+    def test_http_does_not_print_pin_or_bodies(self):
         captured = io.StringIO()
         with patch("sys.stderr", captured), patch("sys.stdout", captured):
             self.login()
@@ -470,7 +530,7 @@ class HTTPTests(unittest.TestCase):
     def test_preview_http_has_no_real_data_and_rejects_login(self):
         self.app.settings.preview = True
         self.assertEqual(self.call("/api/state")[0], 200)
-        self.assertEqual(self.call("/api/login", "POST", {"password": self.options["panel_password"]})[0], 403)
+        self.assertEqual(self.call("/api/login", "POST", {"pin": self.options["panel_pin"]})[0], 403)
         self.assertEqual(self.fake.reads, 0)
 
     @unittest.skipUnless(shutil.which("openssl"), "OpenSSL CLI needed for ephemeral local TLS certificate")
@@ -490,7 +550,7 @@ class HTTPTests(unittest.TestCase):
             try:
                 client_context = ssl.create_default_context(cafile=cert)
                 conn = http.client.HTTPSConnection("127.0.0.1", self.port, context=client_context, timeout=3)
-                conn.request("POST", "/api/login", json.dumps({"password": self.options["panel_password"]}),
+                conn.request("POST", "/api/login", json.dumps({"pin": self.options["panel_pin"]}),
                              {"Content-Type": "application/json", "Origin": "https://" + self.host})
                 response = conn.getresponse()
                 self.assertEqual(response.status, 200)

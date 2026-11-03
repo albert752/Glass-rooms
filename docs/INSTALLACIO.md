@@ -53,17 +53,19 @@ No l'iniciïs encara. Primer configura el transport i l'accés.
 
 | Opció | Límit concret | Pas següent |
 |---|---|---|
-| HTTPS directe al panell, recomanat | Cal que iOS 9 accepti el certificat, el nom i la cadena de confiança i pugui negociar TLS amb aquest servidor. Encara no s'ha provat. | Instal·la un certificat adequat i prova l'obertura a l'iPad abans d'introduir contrasenyes o PINs. |
-| HTTP directe només a casa | El trànsit no està xifrat: la contrasenya del panell, la sessió i qualsevol PIN poden ser interceptats dins de la xarxa. La llista de xarxes no xifra res. | Només continua si acceptes explícitament aquest límit i controles la xarxa. Mantén les accions d'alarma bloquejades mentre no hagis decidit com protegir-ne el PIN. |
+| HTTPS directe al panell, recomanat | Cal que iOS 9 accepti el certificat, el nom i la cadena de confiança i pugui negociar TLS amb aquest servidor. Encara no s'ha provat. | Instal·la un certificat adequat i prova l'obertura a l'iPad abans d'introduir el PIN. |
+| HTTP directe només a casa | El trànsit no està xifrat: el PIN d'accés, la sessió i qualsevol PIN d'alarma poden ser interceptats dins de la xarxa. La llista de xarxes no xifra res. | Només continua si acceptes explícitament aquest límit i controles la xarxa. Mantén les accions d'alarma bloquejades mentre no hagis decidit com protegir-ne el PIN. |
 | Si l'iPad no accepta HTTPS | El codi web no pot solucionar una incompatibilitat de TLS o de confiança del sistema operatiu. | Revisa la cadena del certificat i prova un nom local correcte; si segueix fallant, tria conscientment HTTP local amb les limitacions anteriors o un dispositiu més recent. |
 
-La URL de Home Assistant facilitada també usa HTTP. La pàgina d'administració on introdueixes `panel_password` transmetrà aquesta dada segons el seu propi transport. Configura-la des d'un accés d'administració segur; si només disposes d'aquest HTTP, la decisió sobre el risc també s'aplica a aquest pas.
+La URL de Home Assistant facilitada també usa HTTP. La pàgina d'administració on introdueixes `panel_pin` transmetrà aquesta dada segons el seu propi transport. Configura-la des d'un accés d'administració segur; si només disposes d'aquest HTTP, la decisió sobre el risc també s'aplica a aquest pas.
 
 Per HTTPS directe, posa el certificat i la clau privada a la carpeta compartida **`ssl`** de Home Assistant, amb accés restringit. L'aplicació els llegeix a `/ssl` sense permís d'escriptura. Introdueix només els **noms de fitxer** a `tls_certfile` i `tls_keyfile`; no hi posis rutes ni el contingut de la clau. Han d'estar informats tots dos. El nom o IP de la URL ha de coincidir amb el certificat. No desactivis la validació del certificat per donar la prova per superada.
 
 Glass Rooms usa connexió directa i no confia en capçalere​s de proxy. Un proxy invers no és una alternativa configurada i validada en aquesta entrega.
 
 ## 5. Configura l'accés privat
+
+Si actualitzes des de 1.0.x, elimina `panel_password` de les opcions, introdueix un PIN nou a `panel_pin`, desa i reinicia l'aplicació. Sense aquesta migració l'aplicació rebutja l'arrencada. El PIN d'accés és independent del PIN d'alarma.
 
 A la pestanya **Configuració** de Glass Rooms:
 
@@ -72,7 +74,7 @@ A la pestanya **Configuració** de Glass Rooms:
 | `light_entity_ids` | Llista de qualsevol nombre d'IDs `light.*`, incloses llums noves. |
 | `entity_ids` | Llista opcional d'altres entitats de qualsevol domini, com sensors, interruptors, escenes o ventiladors. |
 | Sensors ambientals | Afegeix els IDs reals `sensor.*` de temperatura i humitat a `entity_ids`. Han de publicar `device_class` igual a `temperature` o `humidity`; el mòdul Clima els detecta automàticament. |
-| `panel_password` | Una contrasenya única de 12 caràcters com a mínim, introduïda només aquí. No és la contrasenya de Home Assistant. |
+| `panel_pin` | Un PIN únic de 6 a 8 dígits, introduït només aquí. No és el PIN d'alarma ni cap credencial de Home Assistant. |
 | `allowed_hosts` | L'adreça exacta amb què obriràs el panell, inclòs el port si escau: `ADREÇA_HA:8099` per a la URL inicial. Afegeix un nom local només si l'utilitzes realment. Sense `http://` ni rutes. |
 | `allowed_networks` | La xarxa CIDR real de casa, o IPs concretes `/32` amb reserva DHCP. No es pot deduir la màscara només de l'adreça `ADREÇA_HA`. Consulta-la al router. |
 | `verified_actions` | Mantén `[]` fins a completar les proves. Després, afegeix `entity_id:servei`; només es mostra si Home Assistant publica el servei per aquell domini. |
@@ -81,7 +83,7 @@ A la pestanya **Configuració** de Glass Rooms:
 | `alarm_arm_code`, `alarm_disarm_code` | Mantén `unknown` fins a confirmar la política de codi. No són camps per escriure el PIN. |
 | `tls_certfile`, `tls_keyfile` | Noms de fitxer a `/ssl` per HTTPS, o buits si has triat HTTP amb els límits anteriors. |
 
-Aquest fragment conté només camps no secrets i conserva els bloquejos. **No és una configuració completa per arrencar**: falta introduir la contrasenya privadament i configurar la xarxa real.
+Aquest fragment conté només camps no secrets i conserva els bloquejos. **No és una configuració completa per arrencar**: falta introduir el PIN privadament i configurar la xarxa real.
 
 Per al sensor del menjador, consulta a Home Assistant els IDs reals de les seves entitats de temperatura i humitat. Afegeix tots dos IDs a `entity_ids` i cadascun seguit de `:menjador` a `room_assignments` (per exemple, `sensor.menjador_temperatura:menjador` si aquest fos l'ID real). Quan incorporis sensors a altres estances, repeteix-ho amb el nom de l'habitació corresponent. No cal afegir-los a `verified_actions`: les lectures són de només consulta.
 
@@ -98,7 +100,7 @@ tls_certfile: ""
 tls_keyfile: ""
 ```
 
-Amb contrasenya absent o massa curta, hosts buits o xarxes buides, el servidor rebutja l'arrencada. No ho solucionis obrint totes les adreces: defineix només els clients de confiança. Si fas servir una xarxa IPv6, comprova també les regles IPv6 del router; no n'afegeixis cap si no la necessites.
+Amb PIN absent o fora dels 6 a 8 dígits, hosts buits o xarxes buides, el servidor rebutja l'arrencada. No ho solucionis obrint totes les adreces: defineix només els clients de confiança. Si fas servir una xarxa IPv6, comprova també les regles IPv6 del router; no n'afegeixis cap si no la necessites.
 
 Supervisor escriu les opcions privades a **`/data/options.json` dins del contenidor**, abans de cada arrencada. Glass Rooms crea l'inventari exclusivament a partir de `light_entity_ids` i `entity_ids`; el codi no enumera cap instància. Les opcions buides donen un inventari buit. No creïs aquest fitxer a `www`, no el publiquis ni editis el codi per afegir-hi IDs o contrasenyes. [Entorn i emmagatzematge oficials d'aplicacions](https://contributors.home-assistant.io/apps/reference/environment/).
 

@@ -8,7 +8,7 @@
     return item;
   }
   document.getElementById('diagnostic-js').textContent = 'D1 · JavaScript clàssic executat.';
-  row('Versió del diagnòstic: 1.0.12');
+  row('Versió del diagnòstic: 1.1.0');
   row('Navegador: ' + navigator.userAgent);
   row('D2 · CSS: ' + (window.getComputedStyle && window.getComputedStyle(document.getElementById('css-probe'), null).width === '9px' ? 'aplicat' : 'no aplicat'));
   row('D3 · API: XHR=' + !!window.XMLHttpRequest + ', JSON=' + !!window.JSON + ', DOMParser=' + !!window.DOMParser);
@@ -31,7 +31,7 @@
     xhr.onerror = function () { item.textContent = label + ': error de xarxa o bloqueig del navegador'; };
     xhr.send(null);
   }
-  inspect('./app.js?v=1.0.12', 'D5 · descàrrega app.js (no execució)');
-  inspect('./style.css?v=1.0.12', 'D6 · descàrrega CSS');
+  inspect('./app.js?v=1.1.0', 'D5 · descàrrega app.js (no execució)');
+  inspect('./style.css?v=1.1.0', 'D6 · descàrrega CSS');
   inspect('./api/session', 'D7 · resposta del servidor');
 }());

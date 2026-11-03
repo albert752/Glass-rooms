@@ -28,10 +28,10 @@
   };
   var state = {connected:false,preview:false,entities:[],fetched_at:null};
   var currentView = 'rooms', csrf = '', authenticated = false, loading = false, busy = false;
+  var loginPin = '', loginSubmitting = false;
   var pollTimer = null, toastTimer = null, modal = null, previousFocus = null, theme = 'auto', glass = false;
-  var updateXhr = null, updateRetryTimer = null, updateRevision = 0, updateGeneration = 0, pendingUpdate = false;
+  var updateXhr = null, updateRetryTimer = null, updateRevision = 0, updateGeneration = 0, pendingUpdate = false, pendingForce = false;
   var POLL_INTERVAL = 30000;
-  var suppressRoomClickUntil = 0;
   var $ = function (id) { return document.getElementById(id); };
   function el(tag, cls, text) { var n=document.createElement(tag); if(cls) { n.className=cls; } if(text!==undefined) { n.textContent=text; } return n; }
   function empty(n) { while(n.firstChild) { n.removeChild(n.firstChild); } }
@@ -65,6 +65,7 @@
     applyTheme();
   }
   function toast(message) { clearTimeout(toastTimer); $('toast').textContent=message; $('toast').className='toast'; toastTimer=setTimeout(function() { $('toast').className='toast hidden'; },6000); }
+  function hideToast() { clearTimeout(toastTimer); $('toast').textContent=''; $('toast').className='toast hidden'; }
   function request(method,path,body,callback,timeout) {
     var xhr=new XMLHttpRequest(), done=false;
     function finish(error,data,status) { if(done) { return; } done=true; callback(error,data,status); }
@@ -80,6 +81,27 @@
     xhr.ontimeout=function() { finish('El servidor no ha respost a temps.',null,0); };
     xhr.send(body?JSON.stringify(body):null);
     return xhr;
+  }
+  function updatePinDisplay() {
+    var marks=[],i,buttons=$('pinpad').querySelectorAll('button');
+    for(i=0;i<8;i++) { marks.push(i<loginPin.length?'●':'○'); }
+    $('pin-display').textContent=marks.join(' ');
+    $('pin-status').textContent=loginPin.length+' de 6 a 8 dígits introduïts';
+    $('login-submit').disabled=loginSubmitting||loginPin.length<6;
+    for(i=0;i<buttons.length;i++) { buttons[i].disabled=loginSubmitting; }
+  }
+  function changePin(key) {
+    if(loginSubmitting) { return; }
+    if(key==='clear') { loginPin=''; }
+    else if(key==='back') { loginPin=loginPin.slice(0,-1); }
+    else if(/^[0-9]$/.test(key)&&loginPin.length<8) { loginPin+=key; }
+    $('login-error').textContent='';
+    updatePinDisplay();
+  }
+  function submitLogin(event) {
+    event.preventDefault(); if(loginSubmitting||loginPin.length<6) { return; }
+    var pin=loginPin; loginPin=''; loginSubmitting=true; updatePinDisplay(); $('login-error').textContent='';
+    request('POST','./api/login',{pin:pin},function(error,data) { loginSubmitting=false; updatePinDisplay(); if(error) { $('login-error').textContent=error; return; } csrf=data.csrf||''; authenticated=true; $('login-layer').className='login-layer hidden'; refresh(true); }); pin=null;
   }
   function byCategory(category) { var result=[],i; for(i=0;i<state.entities.length;i++) { if(state.entities[i].category===category) { result.push(state.entities[i]); } } return result; }
   function byRoom(room) { var result=[],i; for(i=0;i<state.entities.length;i++) { if(state.entities[i].room===room) { result.push(state.entities[i]); } } return result; }
@@ -127,6 +149,13 @@
     var counts=lightAvailability(lights);
     return counts.online+' online · '+counts.offline+' offline';
   }
+  function lightsNeedingAction(lights,action) {
+    var selected=[],target=action==='turn_on'?'on':'off';
+    for(var i=0;i<lights.length;i++) {
+      if(lights[i].state!==target) { selected.push(lights[i]); }
+    }
+    return selected;
+  }
   function renderGlobalLights(parent) {
     var lights=[], lit=false, i;
     for(i=0;i<state.entities.length;i++) {
@@ -136,24 +165,25 @@
       }
     }
     var action=lit?'turn_off':'turn_on';
+    var pending=lightsNeedingAction(lights,action);
     var label=lights.length?(lit?'Apaga tots els llums':'Encén tots els llums'):'Llums pendents de configurar';
-    var control=button('','all-lights-control'+(lit?' all-lights-on':''),function() { turnRoomLights('tota la casa',lights,action); });
+    var control=button('','all-lights-control'+(lit?' all-lights-on':''),function() { turnRoomLights('tota la casa',pending,action); });
     control.appendChild(icon(lit?'lightOn':'light'));
     var content=el('span','all-lights-content');
     content.appendChild(el('span','all-lights-label',label));
     content.appendChild(el('span','all-lights-note',lights.length?lightCounts(lights):'Afegeix llums a la configuració del panell'));
     control.appendChild(content);
-    control.disabled=!state.connected||state.preview||busy||!canToggleLights(lights,action);
+    control.disabled=!state.connected||state.preview||busy||!canToggleLights(pending,action);
     control.setAttribute('title',control.disabled?'Control pendent de connexió o verificació':label);
     parent.appendChild(control);
   }
   function renderRooms(parent) {
-    var label=el('h2','section-label','LES HABITACIONS'); label.appendChild(el('span','', '8 espais · llisca avall per al resum')); parent.appendChild(label);
+    var label=el('h2','section-label','LES HABITACIONS'); label.appendChild(el('span','', '8 espais')); parent.appendChild(label);
     var grid=el('div','room-grid');
     ROOMS.forEach(function(room) {
-      var wrap=el('div','room-wrap'), card=button('','room-card',function() { if(Date.now()>=suppressRoomClickUntil) { openRoom(room.id); } });
+      var wrap=el('div','room-wrap'), card=button('','room-card',function() { openRoom(room.id); });
       card.appendChild(el('h3','room-title',room.name));
-      var art=el('img','room-art'); art.src='./assets/'+room.id+'.svg?v=1.0.12'; art.alt=''; art.setAttribute('aria-hidden','true'); card.appendChild(art);
+      var art=el('img','room-art'); art.src='./assets/'+room.id+'.svg?v=1.1.0'; art.alt=''; art.setAttribute('aria-hidden','true'); card.appendChild(art);
       var entities=byRoom(room.id), lit=false, roomLights=[], canToggle, toggleAction, i;
       for(i=0;i<entities.length;i++) {
         if(entities[i].domain==='light') {
@@ -166,8 +196,9 @@
       if(roomLights.length) {
         card.className+=' '+(lit?'room-lit':'room-dark');
         toggleAction=lit?'turn_off':'turn_on';
-        canToggle=canToggleLights(roomLights,toggleAction);
-        var badge=button('','room-light-badge',function(event) { if(event) { event.stopPropagation(); } turnRoomLights(room.name,roomLights,toggleAction); });
+        var pendingRoomLights=lightsNeedingAction(roomLights,toggleAction);
+        canToggle=canToggleLights(pendingRoomLights,toggleAction);
+        var badge=button('','room-light-badge',function(event) { if(event) { event.stopPropagation(); } turnRoomLights(room.name,pendingRoomLights,toggleAction); });
         badge.className+=' '+(lit?'bulb-lit':'bulb-dark');
         badge.disabled=!canToggle||!state.connected||state.preview||busy;
         badge.setAttribute('aria-label',(lit?'Apaga':'Encén')+' totes les llums de '+room.name);
@@ -247,7 +278,7 @@
     if(to==='lights') { openCategory('lights','Il·luminació'); return; }
     if(to==='security') { openCategory('security','Seguretat'); return; }
     if(to==='scenes') { openCategory('scenes','Escenes i ambient'); return; }
-    currentView=to; renderView(); window.scrollTo(0,0);
+    currentView=to; renderView(); $('view').scrollTop=0;
   }
   function openModal(title,eyebrow,type,id) {
     var changed=!modal||modal.type!==type||modal.id!==id;
@@ -341,36 +372,31 @@
     var buttons=$('modal-content').querySelectorAll('button,input,select'),i; for(i=0;i<buttons.length;i++) { buttons[i].disabled=true; }
     request('POST','./api/action',payload,function(error,data,status) {
       busy=false; if(status===401) { requireLogin(); return; }
-      if(error) { toast(error); } else { toast((data&&data.message)||'Ordre enviada; pendent de confirmar estat.'); }
+      if(error) { toast(error); } else { hideToast(); }
       if(modal&&modal.type==='alarm') { openCategory('security','Seguretat'); }
       refresh(true);
     }); payload.code=null; code=null;
   }
   function turnRoomLights(roomName,lights,action) {
-    var i;
+    var i, ids=[];
     if(busy||!state.connected||state.preview||!lights.length) { return; }
     for(i=0;i<lights.length;i++) {
       if(lights[i].status!=='ok') { toast('No es pot canviar l’estat: hi ha un llum no disponible.'); return; }
       var controls=lights[i].controls||[], ready=false, j;
       for(j=0;j<controls.length;j++) { if(controls[j].action===action&&controls[j].enabled) { ready=true; break; } }
-      if(!ready) { toast('L’ordre per a aquesta habitació encara no està verificada.'); return; }
+      if(!ready) { toast('L’ordre per a algun llum encara no està verificada.'); return; }
+      ids.push(lights[i].entity_id);
     }
     busy=true;
-    function finish(error) {
+    toast('Enviant '+lights.length+(lights.length===1?' ordre':' ordres')+' a '+roomName+'…');
+    request('POST','./api/lights',{entity_ids:ids,action:action},function(error,data,status) {
       busy=false;
+      if(status===401) { hideToast(); requireLogin(); return; }
       if(error) { toast(error); }
-      else { toast('Ordre enviada a '+roomName+'; actualitzant l’estat real.'); }
+      else if(data&&!data.ok) { toast(data.error||'Alguns llums no han canviat.'); }
+      else { hideToast(); }
       refresh(true);
-    }
-    function next(index) {
-      if(index>=lights.length) { finish(null); return; }
-      request('POST','./api/action',{entity_id:lights[index].entity_id,action:action},function(error,data,status) {
-        if(status===401) { busy=false; requireLogin(); return; }
-        if(error) { finish(error); return; }
-        next(index+1);
-      });
-    }
-    next(0);
+    },60000);
   }
   function openSettings() {
     var parent=openModal('Al teu gust.','PREFERÈNCIES','settings','settings'), section=el('div','settings-section');
@@ -381,7 +407,7 @@
     section=el('div','settings-section'); section.appendChild(el('h3','','Connexió')); section.appendChild(el('p','muted',state.demo?'Previsualització amb llums ficticis. No hi ha connexió amb Home Assistant ni controls actius.':(state.preview?'Previsualització local. No hi ha dades de Home Assistant ni controls actius.':(state.connected?'Home Assistant connectat.':'Pendent de connectar amb Home Assistant.')))); section.appendChild(el('p','muted',state.live_updates?'Canvis d’estat en directe actius.':(state.connected?'Connexió d’esdeveniments reconnectant; comprovació de seguretat cada 30 segons.':'Esperant la connexió d’esdeveniments.'))); section.appendChild(el('p','muted',window.location.protocol==='https:'?'Transport HTTPS.':'Transport HTTP local, sense xifrat.'));
     section.appendChild(button('Comprova la connexió','action-button',function() { refresh(true); })); section.appendChild(button('Informe de verificació','action-button',showAudit));
     if(authenticated&&!state.preview) { section.appendChild(button('Tanca la sessió','action-button',function() { request('POST','./api/logout',{},function(error) { if(error) { toast(error); return; } requireLogin(); }); })); }
-    parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.0.12 · Actualitzacions en directe de Home Assistant.'));
+    parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.1.0 · Actualitzacions en directe de Home Assistant.'));
   }
   function showAudit() {
     var parent=openModal('Verificació','CONNEXIÓ I CAPACITATS','audit','audit'); parent.appendChild(el('p','info-box','Informe de lectura per completar la configuració. No inclou credencials.')); var output=el('pre','audit-json','Carregant…'); parent.appendChild(output);
@@ -422,24 +448,24 @@
     return JSON.stringify({connected:state.connected,preview:state.preview,demo:state.demo,entities:state.entities,live_updates:state.live_updates});
   }
   function refresh(force) {
-    if(loading) { pendingUpdate=true; return; } if(!authenticated&&!state.preview) { session(); return; }
+    if(loading) { pendingUpdate=true; pendingForce=pendingForce||!!force; return; } if(!authenticated&&!state.preview) { session(); return; }
     var before=visualSignature(); loading=true;
     request('GET','./api/state',null,function(error,data,status) {
       loading=false;
       if(status===401) { requireLogin(); return; }
       if(error) { state.connected=false; state.error=error; state.fetched_at=null; if(force) { toast(error); } }
       else { state=data; state.entities=state.entities||[]; }
-      if(before!==visualSignature()) { renderView(); refreshModal(); }
+      if(force||before!==visualSignature()) { renderView(); refreshModal(); }
       else { renderStatus(); }
       schedulePoll(); listenForUpdates();
-      if(pendingUpdate) { pendingUpdate=false; refresh(false); }
+      if(pendingUpdate) { var forceNext=pendingForce; pendingUpdate=false; pendingForce=false; refresh(forceNext); }
     });
   }
   function requireLogin() {
     authenticated=false; csrf=''; clearTimeout(pollTimer); stopUpdateListener(); updateRevision=0; closeModal(); state={connected:false,preview:false,entities:[],fetched_at:null}; renderView();
-    $('login-layer').className='login-layer'; $('panel-password').value='';
-    $('login-transport').textContent=window.location.protocol==='https:'?'Connexió HTTPS.':'Aquesta connexió HTTP no xifra la contrasenya. Configura HTTPS abans d’utilitzar credencials reals.';
-    $('panel-password').focus();
+    $('login-layer').className='login-layer'; loginPin=''; loginSubmitting=false; updatePinDisplay();
+    $('login-transport').textContent=window.location.protocol==='https:'?'Connexió HTTPS.':'Aquesta connexió HTTP no xifra el PIN. Configura HTTPS abans d’utilitzar-lo.';
+    $('pinpad').querySelector('button').focus();
   }
   function session() {
     if(loading) { return; } loading=true;
@@ -453,16 +479,22 @@
   function installEvents() {
     var nodes=document.querySelectorAll('[data-icon]'),i;
     for(i=0;i<nodes.length;i++) { nodes[i].appendChild(icon(nodes[i].getAttribute('data-icon'))); }
+    nodes=$('pinpad').querySelectorAll('button');
+    for(i=0;i<nodes.length;i++) { (function(n) { on(n,'click',function() { changePin(n.getAttribute('data-pin')); }); }(nodes[i])); }
+    updatePinDisplay();
     nodes=document.querySelectorAll('[data-nav]');
     for(i=0;i<nodes.length;i++) { (function(n) { on(n,'click',function() { navigate(n.getAttribute('data-nav')); }); }(nodes[i])); }
     on($('settings-button'),'click',openSettings);
     on($('close-modal'),'click',closeModal); on($('modal-backdrop'),'click',closeModal);
-    on($('login-form'),'submit',function(event) {
-      event.preventDefault(); var password=$('panel-password').value; $('panel-password').value=''; $('login-submit').disabled=true; $('login-error').textContent='';
-      request('POST','./api/login',{password:password},function(error,data) { $('login-submit').disabled=false; if(error) { $('login-error').textContent=error; return; } csrf=data.csrf||''; authenticated=true; $('login-layer').className='login-layer hidden'; refresh(true); }); password=null;
-    });
+    on($('login-form'),'submit',submitLogin);
     on(document,'keydown',function(event) {
       if(event.keyCode===27&&modal) { closeModal(); }
+      if($('login-layer').className.indexOf('hidden')===-1&&!event.altKey&&!event.ctrlKey&&!event.metaKey) {
+        var key=event.keyCode;
+        if(key>=48&&key<=57) { changePin(String(key-48)); event.preventDefault(); return; }
+        if(key>=96&&key<=105) { changePin(String(key-96)); event.preventDefault(); return; }
+        if(key===8||key===46) { changePin('back'); event.preventDefault(); return; }
+      }
       if(event.keyCode!==9) { return; }
       var scope=modal?$('drawer'):($('login-layer').className.indexOf('hidden')===-1?$('login-form'):null); if(!scope) { return; }
       var focusable=scope.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),a[href]'); if(!focusable.length) { return; }
@@ -470,25 +502,6 @@
       if(event.shiftKey&&(document.activeElement===first||document.activeElement===scope)) { event.preventDefault(); last.focus(); }
       else if(!event.shiftKey&&document.activeElement===last) { event.preventDefault(); first.focus(); }
     });
-    var start=null;
-    on($('main'),'touchstart',function(event) {
-      if(currentView!=='rooms'||modal||event.touches.length!==1||window.pageYOffset>0) { start=null; return; }
-      var t=event.touches[0];
-      start={x:t.clientX,y:t.clientY};
-    });
-    on($('main'),'touchmove',function(event) {
-      if(!start||event.touches.length!==1) { start=null; return; }
-      var t=event.touches[0], dx=t.clientX-start.x, dy=t.clientY-start.y;
-      if(Math.abs(dx)>=55) { start=null; return; }
-      if(dy>20&&event.cancelable!==false) { event.preventDefault(); }
-    });
-    on($('main'),'touchend',function(event) {
-      if(!start) { return; }
-      var t=event.changedTouches[0], down=t&&t.clientY-start.y>85&&Math.abs(t.clientX-start.x)<55;
-      start=null;
-      if(down) { suppressRoomClickUntil=Date.now()+800; navigate('overview'); }
-    });
-    on($('main'),'touchcancel',function() { start=null; });
     on(document,'visibilitychange',function() { if(document.hidden) { clearTimeout(pollTimer); stopUpdateListener(); if($('alarm-code')) { $('alarm-code').value=''; } } else { clockTick(); refresh(false); listenForUpdates(); } });
     on(window,'pageshow',function(event) { if(event.persisted) { stopUpdateListener(); csrf=''; authenticated=false; updateRevision=0; if($('alarm-code')) { $('alarm-code').value=''; } session(); } });
   }
@@ -503,10 +516,10 @@
     init();
     var cssReady=window.getComputedStyle && window.getComputedStyle($('css-probe'),null).width==='9px';
     if(cssReady) { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.done(); } else { $('boot-status').hidden=true; } }
-    else { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail('B4 · CSS no aplicat'); } else { $('boot-status').textContent='Glass Rooms 1.0.12: no s’ha carregat style.css.'; } }
+    else { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail('B4 · CSS no aplicat'); } else { $('boot-status').textContent='Glass Rooms 1.1.0: no s’ha carregat style.css.'; } }
   } catch(startupError) {
     if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail(startupError.name || 'Error'); return; }
     $('boot-status').hidden=false;
-    $('boot-status').textContent='Glass Rooms 1.0.12: no s’ha pogut iniciar la interfície. Torna a carregar la pàgina i comprova que tots els fitxers són de la mateixa versió.';
+    $('boot-status').textContent='Glass Rooms 1.1.0: no s’ha pogut iniciar la interfície. Torna a carregar la pàgina i comprova que tots els fitxers són de la mateixa versió.';
   }
 }());

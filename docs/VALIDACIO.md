@@ -56,9 +56,9 @@ Anota model, versió exacta d'iOS, URL final i data. Fes la prova amb Safari i d
 | Prova | Criteri d'acceptació | Resultat |
 |---|---|---|
 | Obertura de la URL | Carrega sense excepció de certificat, recursos absents o pàgina en blanc | Pendent |
-| Sessió | Entrada, sortida i nova entrada; contrasenya absent del camp després d'enviar | Pendent |
+| Sessió | Entrada, sortida i nova entrada; el teclat del PIN buida els punts després d'enviar | Pendent |
 | Portada | 8 estances, llegibles, sense desbordament horitzontal a 1024×768 i 768×1024 | Pendent |
-| Resum | S'obre amb el botó i amb lliscament avall des del capdamunt | Pendent |
+| Resum | S'obre amb el botó del menú; lliscar no canvia de secció | Pendent |
 | Navegació | Es poden obrir/tancar finestres, desplaçar llistes i arribar als controls amb una mà | Pendent |
 | Aparença | Dia/nit i vidre desactivat; 20 minuts d'ús sense recàrregues per memòria | Pendent |
 | Recuperació | Desconnectar/reconnectar Wi-Fi i tornar després de bloquejar la pantalla actualitza l'estat | Pendent |
@@ -68,11 +68,11 @@ Anota model, versió exacta d'iOS, URL final i data. Fes la prova amb Safari i d
 | Caducitat | Després de reiniciar l'app o expirar la sessió demana autenticació | Pendent |
 | Xarxa de convidats | No accedeix al panell; cap exposició WAN o túnel | Pendent |
 
-Si un gest no funciona, utilitza el botó. Si el desenfocament és lent, desactiva **Vidre suau**. Si TLS no funciona, segueix les alternatives documentades a la instal·lació; no donis el panell per validat saltant errors de certificat. No cal alterar el bloqueig de pantalla.
+Si el desenfocament és lent, desactiva **Vidre suau**. Si TLS no funciona, segueix les alternatives documentades a la instal·lació; no donis el panell per validat saltant errors de certificat. No cal alterar el bloqueig de pantalla.
 
 ## Registre per acció
 
-Copia aquesta taula tantes vegades com calgui, sense PINs, contrasenyes ni tokens:
+Copia aquesta taula tantes vegades com calgui, sense PINs ni tokens:
 
 | Entitat | Acció / valor no secret | Atributs i servei revisats | Resultat físic | Estat posterior | Data / provador | Entrada habilitada |
 |---|---|---|---|---|---|---|
