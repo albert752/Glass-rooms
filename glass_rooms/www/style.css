@@ -80,6 +80,20 @@ h3 { font-size: 17px; font-weight: 500; }
 .climate-value { display: block; font-size: 28px; font-weight: 400; line-height: 1.2; font-variant-numeric: tabular-nums; }
 .climate-name,.climate-issue { display: block; color: #8b927f; font-size: 11px; }
 .climate-issue { color: #a47848; }
+.climate-periods { margin: 0 8px 16px; }
+.climate-period { min-height: 42px; min-width: 70px; margin: 0 8px 4px 0; padding: 8px 14px; border: 1px solid #cbd2c4; border-radius: 11px; background: #f8f8f0; color: #52634f; font-size: 13px; }
+.climate-period.selected { background: #dfe9da; border-color: #91aa8d; font-weight: 600; }
+.climate-chart { margin: 14px 0 0 -34px; padding: 12px 12px 4px; border: 1px solid #e1e5d9; border-radius: 13px; background: #fdfdf8; }
+.climate-plot { display: block; width: 100%; height: 115px; overflow: visible; }
+.climate-axis { stroke: #d5ddd2; stroke-width: 1; }
+.climate-line { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.temperature-line { stroke: #bd7958; }
+.humidity-line { stroke: #668ca1; }
+.climate-marker { fill: #fff; stroke: #546e67; stroke-width: 2; }
+.climate-chart-endpoints { display: flex; justify-content: space-between; color: #7e897c; font-size: 10px; }
+.climate-selected { min-height: 20px; margin: 10px 0 2px; color: #4d6258; font-size: 12px; font-variant-numeric: tabular-nums; }
+.climate-slider { display: block; width: 100%; height: 32px; margin: 0; }
+.climate-chart-message { min-height: 40px; color: #7e897c; font-size: 12px; }
 .device-list { list-style: none; padding: 0; margin: 0; }
 .device-item { padding: 18px 0; border-bottom: 1px solid #dce0d3; }
 .device-name { font-size: 15px; font-weight: 500; padding-right: 5px; }
@@ -159,6 +173,12 @@ select { width: 100%; margin: 4px 0; }
 .night .climate-reading { border-color: #445762; }
 .night .climate-kind,.night .climate-name { color: #b2beb6; }
 .night .climate-issue { color: #dbbc8a; }
+.night .climate-period { background: #2d414c; border-color: #5b7070; color: #d5e1dc; }
+.night .climate-period.selected { background: #496455; border-color: #829d84; }
+.night .climate-chart { background: #263b45; border-color: #445762; }
+.night .climate-axis { stroke: #546970; }
+.night .climate-chart-endpoints,.night .climate-chart-message { color: #b2beb6; }
+.night .climate-selected { color: #d5e1dc; }
 .night .drawer,.night .login-card { background: #243944; border-color: #50616b; }
 .night .drawer-head,.night .device-item,.night .settings-section { border-color: #425862; }
 .night .icon-button,.night .info-box,.night .segmented,.night .group-badge,.night .audit-json { background: #344d56; color: #c4d0d1; }

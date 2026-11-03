@@ -300,6 +300,13 @@ class HAClient:
     def call(self, domain, service, payload):
         self._request("/services/" + domain + "/" + service, payload)
 
+    def history(self, entity_ids, hours):
+        end = datetime.datetime.now(datetime.timezone.utc)
+        start = end - datetime.timedelta(hours=hours)
+        query = parse.urlencode({"filter_entity_id": ",".join(entity_ids), "end_time": end.isoformat(),
+                                 "minimal_response": "", "no_attributes": ""})
+        return self._request("/history/period/" + parse.quote(start.isoformat()) + "?" + query)
+
     def watch_states(self, entity_ids, on_state_change, on_connection, stop_event):
         retry = 2
         while not stop_event.is_set():
@@ -708,6 +715,48 @@ class App:
                 "note": "Les capacitats detectades no acrediten una prova física; no es verifica cap acció automàticament."}
         return result
 
+    def climate_history(self, hours):
+        if hours not in (6, 24, 168, 720):
+            raise PublicError("El període de l'historial no és vàlid.")
+        if self.settings.preview:
+            return {"hours": hours, "series": {}}
+        states, services, _ = self.client.snapshot(self.settings.by_id)
+        sensors = [item["entity_id"] for item in entities_for(states, services, self.settings, True)
+                   if item["category"] == "climate"]
+        series = {entity_id: [] for entity_id in sensors}
+        if not sensors:
+            return {"hours": hours, "series": series}
+        history = self.client.history(sensors, hours)
+        if not isinstance(history, list):
+            raise PublicError("L'historial de Home Assistant no té el format esperat.", 502)
+        for group in history:
+            if not isinstance(group, list):
+                continue
+            entity_id = group[0].get("entity_id") if group and isinstance(group[0], dict) else None
+            if entity_id not in series:
+                continue
+            for row in group:
+                if not isinstance(row, dict) or row.get("entity_id", entity_id) != entity_id:
+                    continue
+                timestamp, value = row.get("last_changed"), row.get("state")
+                if not isinstance(timestamp, str) or not isinstance(value, str) or not re.fullmatch(r"-?\d+(?:\.\d+)?", value):
+                    continue
+                try:
+                    instant = datetime.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    number = float(value)
+                except ValueError:
+                    continue
+                if instant.tzinfo is None or not math.isfinite(number):
+                    continue
+                series[entity_id].append({"time": instant.astimezone(datetime.timezone.utc).isoformat(),
+                                          "value": number})
+        for entity_id, points in series.items():
+            points.sort(key=lambda point: point["time"])
+            if len(points) > 181:
+                step = (len(points) - 1) / 180
+                series[entity_id] = [points[round(index * step)] for index in range(181)]
+        return {"hours": hours, "series": series}
+
     def action(self, body):
         if self.settings.preview:
             raise PublicError("La previsualització és només de lectura.", 403)
@@ -934,6 +983,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.session()
             self.app.rate_limit(self.client_address[0], "read", 90, 60)
             self.reply(self.app.state(audit=path == "/api/audit"))
+            return
+        if path == "/api/climate-history":
+            if not self.app.settings.preview:
+                self.session()
+            query = parse.parse_qs(parsed_path.query, keep_blank_values=True)
+            if set(query) != {"hours"} or len(query["hours"]) != 1 or query["hours"][0] not in {"6", "24", "168", "720"}:
+                raise PublicError("El període de l'historial no és vàlid.")
+            self.app.rate_limit(self.client_address[0], "history", 12, 60)
+            self.reply(self.app.climate_history(int(query["hours"][0])))
             return
         if path == "/api/updates":
             if not self.app.settings.preview:

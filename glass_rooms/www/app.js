@@ -31,6 +31,7 @@
   var loginPin = '', loginSubmitting = false;
   var pollTimer = null, toastTimer = null, modal = null, previousFocus = null, theme = 'auto', glass = false;
   var updateXhr = null, updateRetryTimer = null, updateRevision = 0, updateGeneration = 0, pendingUpdate = false, pendingForce = false;
+  var historyState = {hours:24,series:{},loadedAt:0,loading:false,error:''}, historyXhr = null, historyGeneration = 0;
   var POLL_INTERVAL = 30000;
   var $ = function (id) { return document.getElementById(id); };
   function el(tag, cls, text) { var n=document.createElement(tag); if(cls) { n.className=cls; } if(text!==undefined) { n.textContent=text; } return n; }
@@ -183,7 +184,7 @@
     ROOMS.forEach(function(room) {
       var wrap=el('div','room-wrap'), card=button('','room-card',function() { openRoom(room.id); });
       card.appendChild(el('h3','room-title',room.name));
-      var art=el('img','room-art'); art.src='./assets/'+room.id+'.svg?v=1.1.0'; art.alt=''; art.setAttribute('aria-hidden','true'); card.appendChild(art);
+      var art=el('img','room-art'); art.src='./assets/'+room.id+'.svg?v=1.1.1'; art.alt=''; art.setAttribute('aria-hidden','true'); card.appendChild(art);
       var entities=byRoom(room.id), lit=false, roomLights=[], canToggle, toggleAction, i;
       for(i=0;i<entities.length;i++) {
         if(entities[i].domain==='light') {
@@ -221,11 +222,81 @@
     var unit=(entity.attributes||{}).unit_of_measurement;
     return entity.state+(unit?' '+unit:'');
   }
+  function climateTime(value) {
+    var date=new Date(value);
+    return isNaN(date.getTime())?'Hora desconeguda':date.getDate()+'/'+pad(date.getMonth()+1)+' '+pad(date.getHours())+':'+pad(date.getMinutes());
+  }
+  function svgNode(tag,attributes) {
+    var node=document.createElementNS('http://www.w3.org/2000/svg',tag), key;
+    for(key in attributes) { if(attributes.hasOwnProperty(key)) { node.setAttribute(key,attributes[key]); } }
+    return node;
+  }
+  function renderClimateChart(entity) {
+    var chart=el('div','climate-chart'), points=historyState.series[entity.entity_id]||[], unit=(entity.attributes||{}).unit_of_measurement||'';
+    if(!points.length) {
+      chart.appendChild(el('p','climate-chart-message',historyState.loading?'Carregant l’historial…':historyState.error||'Encara no hi ha historial disponible.'));
+      return chart;
+    }
+    var i,minimum=points[0].value,maximum=points[0].value;
+    for(i=1;i<points.length;i++) { minimum=Math.min(minimum,points[i].value); maximum=Math.max(maximum,points[i].value); }
+    var margin=Math.max((maximum-minimum)*0.12,0.5), bottom=minimum-margin, span=maximum-minimum+2*margin;
+    var firstTime=new Date(points[0].time).getTime(), lastTime=new Date(points[points.length-1].time).getTime();
+    function x(index) { return 8+(lastTime===firstTime?0:(new Date(points[index].time).getTime()-firstTime)*304/(lastTime-firstTime)); }
+    function y(value) { return 96-(value-bottom)*84/span; }
+    var svg=svgNode('svg',{'viewBox':'0 0 320 108','class':'climate-plot','role':'img','aria-label':'Historial de '+entity.name});
+    svg.appendChild(svgNode('line',{x1:'8',y1:'96',x2:'312',y2:'96','class':'climate-axis'}));
+    var path='';
+    for(i=0;i<points.length;i++) { path+=(i?' L':'M')+x(i).toFixed(1)+' '+y(points[i].value).toFixed(1); }
+    svg.appendChild(svgNode('path',{d:path,'class':'climate-line '+((entity.attributes||{}).device_class==='humidity'?'humidity-line':'temperature-line')}));
+    var selected=svgNode('circle',{cx:x(points.length-1).toFixed(1),cy:y(points[points.length-1].value).toFixed(1),r:'4','class':'climate-marker'});
+    svg.appendChild(selected); chart.appendChild(svg);
+    var endpoints=el('div','climate-chart-endpoints');
+    endpoints.appendChild(el('span','',climateTime(points[0].time)));
+    endpoints.appendChild(el('span','',climateTime(points[points.length-1].time)));
+    chart.appendChild(endpoints);
+    var selectedText=el('p','climate-selected'); chart.appendChild(selectedText);
+    var slider=el('input','climate-slider'); slider.type='range'; slider.min='0'; slider.max=String(points.length-1); slider.value=String(points.length-1);
+    slider.setAttribute('aria-label','Consulta l’historial de '+entity.name);
+    function selectPoint() {
+      var index=Number(slider.value),point=points[index];
+      selected.setAttribute('cx',x(index).toFixed(1)); selected.setAttribute('cy',y(point.value).toFixed(1));
+      selectedText.textContent=climateTime(point.time)+' · '+point.value+(unit?' '+unit:'');
+    }
+    on(slider,'input',selectPoint); on(slider,'change',selectPoint); selectPoint(); chart.appendChild(slider);
+    return chart;
+  }
+  function loadClimateHistory() {
+    if(!state.connected || currentView!=='climate' || !byCategory('climate').length || historyState.loading || Date.now()-historyState.loadedAt<120000) { return; }
+    historyState.loading=true; historyState.error='';
+    renderView();
+    var generation=++historyGeneration, hours=historyState.hours;
+    historyXhr=request('GET','./api/climate-history?hours='+hours,null,function(error,data,status) {
+      if(generation!==historyGeneration) { return; }
+      historyXhr=null; historyState.loading=false; historyState.loadedAt=Date.now();
+      if(status===401) { requireLogin(); return; }
+      if(error) { historyState.error='No s’ha pogut carregar l’historial.'; }
+      else { historyState.series=data.series||{}; }
+      if(currentView==='climate') { renderView(); }
+    });
+  }
+  function changeClimatePeriod(hours) {
+    if(historyXhr) { historyXhr.abort(); historyXhr=null; }
+    historyGeneration++; historyState={hours:hours,series:{},loadedAt:0,loading:false,error:''};
+    renderView();
+  }
   function renderClimate(parent) {
     var sensors=byCategory('climate'), groups=[], i, j, room, matches, card, reading, metric;
     var label=el('h2','section-label','TEMPERATURA I HUMITAT');
     label.appendChild(el('span','',state.connected?sensors.length+' '+(sensors.length===1?'sensor configurat':'sensors configurats'):'Esperant connexió'));
     parent.appendChild(label);
+    if(sensors.length) {
+      var periods=el('div','climate-periods');
+      [{hours:6,label:'6 h'},{hours:24,label:'24 h'},{hours:168,label:'7 dies'},{hours:720,label:'1 mes'}].forEach(function(period) {
+        var control=button(period.label,'climate-period'+(historyState.hours===period.hours?' selected':''),function() { changeClimatePeriod(period.hours); });
+        control.setAttribute('aria-pressed',historyState.hours===period.hours?'true':'false'); periods.appendChild(control);
+      });
+      parent.appendChild(periods);
+    }
     for(i=0;i<ROOMS.length;i++) { groups.push({id:ROOMS[i].id,name:ROOMS[i].name}); }
     groups.push({id:null,name:'Sense habitació assignada'});
     var grid=el('div','climate-grid');
@@ -238,11 +309,12 @@
         metric=(matches[j].attributes||{}).device_class;
         reading=el('div','climate-reading');
         reading.appendChild(icon(metric==='temperature'?'thermometer':'humidity'));
-        reading.appendChild(el('span','climate-kind',metric==='temperature'?'Temperatura':'Humitat'));
+        reading.appendChild(el('span','climate-kind',metric==='temperature'?'Temperatura actual':'Humitat actual'));
         reading.appendChild(el('strong','climate-value',climateReading(matches[j])));
         reading.appendChild(el('span','climate-name',matches[j].name));
         if(matches[j].status!=='ok'||!state.connected) { reading.appendChild(el('span','climate-issue',stateText(matches[j]))); }
         else if(climateReading(matches[j])==='—') { reading.appendChild(el('span','climate-issue','Lectura no vàlida')); }
+        reading.appendChild(renderClimateChart(matches[j]));
         card.appendChild(reading);
       }
       grid.appendChild(card);
@@ -269,9 +341,10 @@
     for(i=0;i<buttons.length;i++) { var active=buttons[i].getAttribute('data-nav')===currentView; buttons[i].className='nav-button'+(active?' active':''); buttons[i].setAttribute('aria-current',active?'page':'false'); }
     if(currentView!=='climate') { renderGlobalLights(view); }
     if(currentView==='rooms') { setHeading('EL TEU ESPAI','Casa, amb calma.',state.demo?'Previsualització · llums simulats':'Cada estança, al teu ritme.'); renderRooms(view); }
-    else if(currentView==='climate') { setHeading('EL CONFORT DE CASA','Temperatura i humitat.','Lectures de cada habitació.'); renderClimate(view); }
+    else if(currentView==='climate') { setHeading('EL CONFORT DE CASA','Temperatura i humitat.','Valors actuals i evolució de cada habitació.'); renderClimate(view); }
     else { setHeading('LA CASA, D’UN COP D’ULL','Tot al seu lloc.',state.demo?'Previsualització · llums simulats':'L’estat de casa, sense presses.'); renderOverview(view); }
     renderStatus();
+    if(currentView==='climate') { loadClimateHistory(); }
   }
   function navigate(to) {
     closeModal();
@@ -407,7 +480,7 @@
     section=el('div','settings-section'); section.appendChild(el('h3','','Connexió')); section.appendChild(el('p','muted',state.demo?'Previsualització amb llums ficticis. No hi ha connexió amb Home Assistant ni controls actius.':(state.preview?'Previsualització local. No hi ha dades de Home Assistant ni controls actius.':(state.connected?'Home Assistant connectat.':'Pendent de connectar amb Home Assistant.')))); section.appendChild(el('p','muted',state.live_updates?'Canvis d’estat en directe actius.':(state.connected?'Connexió d’esdeveniments reconnectant; comprovació de seguretat cada 30 segons.':'Esperant la connexió d’esdeveniments.'))); section.appendChild(el('p','muted',window.location.protocol==='https:'?'Transport HTTPS.':'Transport HTTP local, sense xifrat.'));
     section.appendChild(button('Comprova la connexió','action-button',function() { refresh(true); })); section.appendChild(button('Informe de verificació','action-button',showAudit));
     if(authenticated&&!state.preview) { section.appendChild(button('Tanca la sessió','action-button',function() { request('POST','./api/logout',{},function(error) { if(error) { toast(error); return; } requireLogin(); }); })); }
-    parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.1.0 · Actualitzacions en directe de Home Assistant.'));
+    parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.1.1 · Actualitzacions en directe de Home Assistant.'));
   }
   function showAudit() {
     var parent=openModal('Verificació','CONNEXIÓ I CAPACITATS','audit','audit'); parent.appendChild(el('p','info-box','Informe de lectura per completar la configuració. No inclou credencials.')); var output=el('pre','audit-json','Carregant…'); parent.appendChild(output);
@@ -462,7 +535,9 @@
     });
   }
   function requireLogin() {
-    authenticated=false; csrf=''; clearTimeout(pollTimer); stopUpdateListener(); updateRevision=0; closeModal(); state={connected:false,preview:false,entities:[],fetched_at:null}; renderView();
+    authenticated=false; csrf=''; clearTimeout(pollTimer); stopUpdateListener(); updateRevision=0; closeModal();
+    if(historyXhr) { historyXhr.abort(); historyXhr=null; } historyGeneration++; historyState={hours:24,series:{},loadedAt:0,loading:false,error:''};
+    state={connected:false,preview:false,entities:[],fetched_at:null}; renderView();
     $('login-layer').className='login-layer'; loginPin=''; loginSubmitting=false; updatePinDisplay();
     $('login-transport').textContent=window.location.protocol==='https:'?'Connexió HTTPS.':'Aquesta connexió HTTP no xifra el PIN. Configura HTTPS abans d’utilitzar-lo.';
     $('pinpad').querySelector('button').focus();
@@ -516,10 +591,10 @@
     init();
     var cssReady=window.getComputedStyle && window.getComputedStyle($('css-probe'),null).width==='9px';
     if(cssReady) { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.done(); } else { $('boot-status').hidden=true; } }
-    else { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail('B4 · CSS no aplicat'); } else { $('boot-status').textContent='Glass Rooms 1.1.0: no s’ha carregat style.css.'; } }
+    else { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail('B4 · CSS no aplicat'); } else { $('boot-status').textContent='Glass Rooms 1.1.1: no s’ha carregat style.css.'; } }
   } catch(startupError) {
     if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail(startupError.name || 'Error'); return; }
     $('boot-status').hidden=false;
-    $('boot-status').textContent='Glass Rooms 1.1.0: no s’ha pogut iniciar la interfície. Torna a carregar la pàgina i comprova que tots els fitxers són de la mateixa versió.';
+    $('boot-status').textContent='Glass Rooms 1.1.1: no s’ha pogut iniciar la interfície. Torna a carregar la pàgina i comprova que tots els fitxers són de la mateixa versió.';
   }
 }());

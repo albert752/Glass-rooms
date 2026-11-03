@@ -58,6 +58,8 @@ class FakeHA:
         self.calls = []
         self.reads = 0
         self.failure = None
+        self.history_rows = []
+        self.history_requests = []
 
     def snapshot(self, by_id=None):
         self.reads += 1
@@ -67,6 +69,10 @@ class FakeHA:
 
     def call(self, domain, service, payload):
         self.calls.append((domain, service, copy.deepcopy(payload)))
+
+    def history(self, entity_ids, hours):
+        self.history_requests.append((list(entity_ids), hours))
+        return copy.deepcopy(self.history_rows)
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -430,6 +436,36 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(self.call(path)[0], 401)
         self.assertEqual(self.call("/api/session")[1], {"authenticated": False, "preview": False})
         self.assertEqual(self.fake.reads, 0)
+
+    def test_climate_history_is_authenticated_filtered_and_numeric(self):
+        temperature = "sensor.test_temperature"
+        humidity = "sensor.test_humidity"
+        self.app.settings = Settings(config(entity_ids=[temperature, humidity, SHOWERS]))
+        self.app.settings.allowed_hosts = {self.host}
+        self.fake.states = {
+            **raw(temperature, "21.4", device_class="temperature", unit_of_measurement="°C"),
+            **raw(humidity, "48", device_class="humidity", unit_of_measurement="%"),
+            **raw(SHOWERS, "3", device_class="water"),
+        }
+        self.fake.history_rows = [[
+            {"entity_id": temperature, "state": "21.0", "last_changed": "2026-11-03T10:00:00+00:00"},
+            {"state": "21.4", "last_changed": "2026-11-03T10:30:00+00:00"},
+            {"state": "unavailable", "last_changed": "2026-11-03T11:00:00+00:00"},
+        ], [{"entity_id": humidity, "state": "48", "last_changed": "2026-11-03T10:00:00+00:00"}],
+            [{"entity_id": SHOWERS, "state": "3", "last_changed": "2026-11-03T10:00:00+00:00"}]]
+        self.assertEqual(self.call("/api/climate-history?hours=24")[0], 401)
+        self.login()
+        self.assertEqual(self.call("/api/climate-history?hours=12")[0], 400)
+        status, result, _ = self.call("/api/climate-history?hours=24")
+        self.assertEqual(status, 200)
+        self.assertEqual(self.fake.history_requests, [([temperature, humidity], 24)])
+        self.assertEqual(list(result["series"]), [temperature, humidity])
+        self.assertEqual([point["value"] for point in result["series"][temperature]], [21.0, 21.4])
+        self.assertEqual(result["series"][humidity][0]["value"], 48)
+        status, month, _ = self.call("/api/climate-history?hours=720")
+        self.assertEqual(status, 200)
+        self.assertEqual(month["hours"], 720)
+        self.assertEqual(self.fake.history_requests[-1], ([temperature, humidity], 720))
 
     def test_login_cookie_csrf_and_logout_lifecycle(self):
         headers = self.login()
