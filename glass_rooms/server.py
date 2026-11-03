@@ -522,6 +522,8 @@ def entities_for(states, services, settings, connected):
                 entity["state"] = value if short_string(value, 256) else None
                 entity["status"] = value if value in ("unavailable", "unknown") else ("ok" if entity["state"] is not None else "unknown")
                 entity["attributes"] = filtered_attributes(item["domain"], raw.get("attributes"))
+                if item["domain"] == "sensor" and entity["attributes"].get("device_class") in {"temperature", "humidity"}:
+                    entity["category"] = "climate"
                 friendly_name = entity["attributes"].get("friendly_name")
                 if short_string(friendly_name, 120) and friendly_name.strip():
                     entity["name"] = friendly_name.strip()
@@ -792,13 +794,14 @@ class Handler(BaseHTTPRequestHandler):
     def app(self):
         return self.server.app
 
-    def reply(self, data, status=200, content_type="application/json; charset=utf-8", cookie=None):
+    def reply(self, data, status=200, content_type="application/json; charset=utf-8", cookie=None, cache_control="no-store"):
         payload = data if isinstance(data, bytes) else json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Pragma", "no-cache")
+        self.send_header("Cache-Control", cache_control)
+        if cache_control == "no-store":
+            self.send_header("Pragma", "no-cache")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "same-origin")
@@ -924,7 +927,8 @@ class Handler(BaseHTTPRequestHandler):
         # Whitelist plus resolution check prevents a symlink from exposing /data or /ssl.
         if not target.resolve().is_relative_to(ROOT.resolve()) or not target.is_file():
             raise PublicError("Recurs no trobat.", 404)
-        self.reply(target.read_bytes(), content_type=kind)
+        self.reply(target.read_bytes(), content_type=kind,
+                   cache_control="public, max-age=86400" if kind == "image/svg+xml" else "no-store")
 
     def dispatch_post(self):
         self.guard(writing=True)

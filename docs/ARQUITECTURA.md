@@ -19,13 +19,15 @@ Home Assistant Core → integracions → dispositius
 
 El navegador no parla directament amb l'API de Core. El servidor consulta estats, serveis i la versió, i manté una subscripció WebSocket limitada als IDs configurats. Els canvis desperten una consulta XHR de llarga espera del navegador; si la subscripció cau, es torna a consultar l'estat cada 30 segons. El servidor retorna només el catàleg i els atributs seleccionats i torna a llegir les capacitats abans d'enviar cada ordre. Una crida acceptada es mostra com a «pendent de confirmar estat»; no es modifica l'estat visual de manera optimista. No hi ha reintents automàtics d'ordres.
 
+Els sensors `sensor.*` configurats amb `device_class` `temperature` o `humidity` formen la categoria Clima. La interfície els agrupa segons `room_assignments` i mostra totes les lectures d'una habitació, amb la unitat publicada per Home Assistant. Els sensors sense assignació apareixen separats. Aquesta categoria només consulta estats i no habilita cap ordre.
+
 Una acció necessita tres comprovacions: capacitat actual publicada, servei disponible i entrada exacta a `verified_actions` després d'una prova real. La presència d'una entitat a l'inventari no habilita res. `room_assignments` només configura la navegació; no crea grups ni canvia Home Assistant.
 
 El token de Supervisor té accés ampli a Core. La restricció per entitat és una responsabilitat del servidor, no un permís individual concedit per Home Assistant. L'app no sol·licita l'API de Supervisor, Docker, xarxa de l'amfitrió, dispositius, ni desactivació de protecció. No és un proxy d'accions arbitràries.
 
 La contrasenya del panell queda en les opcions privades de Supervisor; en memòria es comprova amb PBKDF2. Les sessions aleatòries caduquen al cap de 12 hores i es perden en reiniciar; estan lligades a la IP del client. La cookie és HttpOnly, `SameSite=Strict` i `Secure` si hi ha TLS. El client només rep un nonce CSRF temporal. iOS 9 pot ignorar SameSite: el servidor exigeix també origen exacte o Referer del mateix origen, JSON i nonce. No accepta capçaleres de proxy com a prova de xarxa o transport.
 
-Els logs no inclouen cossos, PINs, capçaleres ni respostes de Core. El PIN es buida del camp abans de transmetre i no es desa en preferències ni en el servidor. `localStorage` només conté el tema i la preferència de vidre; si no funciona, la interfície continua amb els valors predeterminats. Les API i els recursos se serveixen amb `no-store`. La contrasenya i el PIN encara necessiten HTTPS per protegir el transport.
+Els logs no inclouen cossos, PINs, capçaleres ni respostes de Core. El PIN es buida del camp abans de transmetre i no es desa en preferències ni en el servidor. `localStorage` només conté el tema i la preferència de vidre; si no funciona, la interfície continua amb els valors predeterminats. Les API, l'HTML, el CSS i el JavaScript se serveixen amb `no-store`; les il·lustracions SVG públiques es conserven un dia i porten una versió a l'URL per renovar-les en actualitzar el panell. La contrasenya i el PIN encara necessiten HTTPS per protegir el transport.
 
 ## Eleccions per a Safari d'iOS 9
 

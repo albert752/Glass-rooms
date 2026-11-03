@@ -22,7 +22,9 @@
     close:'<path d="M6 6l12 12M6 18L18 6"/>',
     water:'<path d="M12 2s-7 8-7 13a7 7 0 0014 0c0-5-7-13-7-13zM8 15a4 4 0 004 4"/>',
     fan:'<circle cx="12" cy="12" r="2"/><path d="M11 10C5 4 12-2 15 4c1 2-1 4-2 6M14 12c8-2 10 7 3 7-3 0-4-3-4-5M10 13c-2 8-10 5-7 0 1-3 4-2 7-2"/>',
-    media:'<path d="M9 18V5l11-2v13M9 9l11-2"/><ellipse cx="6" cy="18" rx="3" ry="2"/><ellipse cx="17" cy="16" rx="3" ry="2"/>'
+    media:'<path d="M9 18V5l11-2v13M9 9l11-2"/><ellipse cx="6" cy="18" rx="3" ry="2"/><ellipse cx="17" cy="16" rx="3" ry="2"/>',
+    thermometer:'<path d="M10 14V5a2 2 0 014 0v9a4 4 0 11-4 0zM12 10v8"/>',
+    humidity:'<path d="M12 2C9 7 5 11 5 15a7 7 0 0014 0c0-4-4-8-7-13zM9 16a3 3 0 003 3"/>'
   };
   var state = {connected:false,preview:false,entities:[],fetched_at:null};
   var currentView = 'rooms', csrf = '', authenticated = false, loading = false, busy = false;
@@ -50,7 +52,10 @@
   function applyTheme() {
     var hour=new Date().getHours(), dark=theme==='night'||(theme==='auto'&&(hour<7||hour>=20));
     document.body.className=(dark?'night':'day')+(glass?' glass':'');
-    empty($('time-icon')); $('time-icon').appendChild(icon(dark?'moon':'sun'));
+    var timeIcon=$('time-icon'), name=dark?'moon':'sun';
+    if(timeIcon.getAttribute('data-icon')!==name||!timeIcon.firstChild) {
+      empty(timeIcon); timeIcon.appendChild(icon(name)); timeIcon.setAttribute('data-icon',name);
+    }
   }
   function clockTick() {
     var d=new Date(), days=['Diumenge','Dilluns','Dimarts','Dimecres','Dijous','Divendres','Dissabte'];
@@ -101,33 +106,67 @@
     var d=state.fetched_at?new Date(state.fetched_at):null;
     $('last-update').textContent=state.connected&&d&&!isNaN(d.getTime())?'Actualitzat a les '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds()):'Esperant dades de casa';
   }
+  function canToggleLights(lights,action) {
+    if(!lights.length) { return false; }
+    for(var i=0;i<lights.length;i++) {
+      if(lights[i].status!=='ok') { return false; }
+      var controls=lights[i].controls||[], ready=false;
+      for(var j=0;j<controls.length;j++) { if(controls[j].action===action&&controls[j].enabled) { ready=true; break; } }
+      if(!ready) { return false; }
+    }
+    return true;
+  }
+  function lightAvailability(lights) {
+    var online=0;
+    for(var i=0;i<lights.length;i++) {
+      if((state.connected||state.demo)&&lights[i].status==='ok') { online++; }
+    }
+    return {online:online,offline:lights.length-online};
+  }
+  function lightCounts(lights) {
+    var counts=lightAvailability(lights);
+    return counts.online+' online · '+counts.offline+' offline';
+  }
+  function renderGlobalLights(parent) {
+    var lights=[], lit=false, i;
+    for(i=0;i<state.entities.length;i++) {
+      if(state.entities[i].domain==='light') {
+        lights.push(state.entities[i]);
+        if(state.entities[i].status==='ok'&&state.entities[i].state==='on') { lit=true; }
+      }
+    }
+    var action=lit?'turn_off':'turn_on';
+    var label=lights.length?(lit?'Apaga tots els llums':'Encén tots els llums'):'Llums pendents de configurar';
+    var control=button('','all-lights-control'+(lit?' all-lights-on':''),function() { turnRoomLights('tota la casa',lights,action); });
+    control.appendChild(icon(lit?'lightOn':'light'));
+    var content=el('span','all-lights-content');
+    content.appendChild(el('span','all-lights-label',label));
+    content.appendChild(el('span','all-lights-note',lights.length?lightCounts(lights):'Afegeix llums a la configuració del panell'));
+    control.appendChild(content);
+    control.disabled=!state.connected||state.preview||busy||!canToggleLights(lights,action);
+    control.setAttribute('title',control.disabled?'Control pendent de connexió o verificació':label);
+    parent.appendChild(control);
+  }
   function renderRooms(parent) {
     var label=el('h2','section-label','LES HABITACIONS'); label.appendChild(el('span','', '8 espais · llisca avall per al resum')); parent.appendChild(label);
     var grid=el('div','room-grid');
     ROOMS.forEach(function(room) {
       var wrap=el('div','room-wrap'), card=button('','room-card',function() { if(Date.now()>=suppressRoomClickUntil) { openRoom(room.id); } });
       card.appendChild(el('h3','room-title',room.name));
-      var art=el('img','room-art'); art.src='./assets/'+room.id+'.svg'; art.alt=''; art.setAttribute('aria-hidden','true'); card.appendChild(art);
-      var entities=byRoom(room.id), known=0, issues=0, lights=0, unavailableLights=0, lit=false, roomLights=[], canToggle=true, toggleAction, i;
+      var art=el('img','room-art'); art.src='./assets/'+room.id+'.svg?v=1.0.16'; art.alt=''; art.setAttribute('aria-hidden','true'); card.appendChild(art);
+      var entities=byRoom(room.id), lit=false, roomLights=[], canToggle, toggleAction, i;
       for(i=0;i<entities.length;i++) {
-        if(entities[i].status==='ok') { known++; } else { issues++; }
         if(entities[i].domain==='light') {
-          lights++;
           roomLights.push(entities[i]);
-          if(entities[i].status==='unavailable') { unavailableLights++; }
           if(entities[i].status==='ok'&&entities[i].state==='on') { lit=true; }
         }
       }
-      card.setAttribute('aria-label','Obre '+room.name+(lights?(lit?', amb llums encesos':', llums apagats')+(unavailableLights?', '+unavailableLights+' '+(unavailableLights===1?'llum no disponible':'llums no disponibles'):''):''));
-      if(lights) {
+      var availability=lightAvailability(roomLights), counts=availability.online+' online · '+availability.offline+' offline';
+      card.setAttribute('aria-label','Obre '+room.name+', '+counts+(roomLights.length&&(state.connected||state.demo)?(lit?', amb llums encesos':', llums apagats'):''));
+      if(roomLights.length) {
         card.className+=' '+(lit?'room-lit':'room-dark');
         toggleAction=lit?'turn_off':'turn_on';
-        for(i=0;i<roomLights.length;i++) {
-          var roomControls=roomLights[i].controls||[], toggleReady=false, ci;
-          if(roomLights[i].status!=='ok') { canToggle=false; }
-          for(ci=0;ci<roomControls.length;ci++) { if(roomControls[ci].action===toggleAction&&roomControls[ci].enabled) { toggleReady=true; } }
-          if(!toggleReady) { canToggle=false; }
-        }
+        canToggle=canToggleLights(roomLights,toggleAction);
         var badge=button('','room-light-badge',function(event) { if(event) { event.stopPropagation(); } turnRoomLights(room.name,roomLights,toggleAction); });
         badge.className+=' '+(lit?'bulb-lit':'bulb-dark');
         badge.disabled=!canToggle||!state.connected||state.preview||busy;
@@ -135,22 +174,61 @@
         badge.setAttribute('title',badge.disabled?'Control pendent de connexió o verificació':(lit?'Apaga':'Encén')+' totes les llums de '+room.name);
         badge.appendChild(icon(lit?'lightOn':'light'));
       }
-      var msg=entities.length?((state.connected||state.demo)?known+' amb estat'+(unavailableLights?' · '+unavailableLights+' '+(unavailableLights===1?'llum no disponible':'llums no disponibles'):'')+(issues>unavailableLights?' · '+(issues-unavailableLights)+' pendents':''):'Sense connexió'):'Ubicació pendent';
-      var meta=el('div','room-meta'+(issues?' has-issue':'')); meta.appendChild(el('span','status-dot')); meta.appendChild(document.createTextNode(msg)); card.appendChild(meta);
-      wrap.appendChild(card); if(lights) { wrap.appendChild(badge); } grid.appendChild(wrap);
+      var meta=el('div','room-meta'+(availability.offline?' has-issue':'')); meta.appendChild(el('span','status-dot')); meta.appendChild(document.createTextNode(counts)); card.appendChild(meta);
+      wrap.appendChild(card); if(roomLights.length) { wrap.appendChild(badge); } grid.appendChild(wrap);
     }); parent.appendChild(grid);
   }
   function summaryValue(category) {
+    if(category==='lights') { return lightCounts(byCategory('lights')); }
     if(!state.connected&&!state.demo) { return '—'; }
     var items=byCategory(category), valid=0,i; for(i=0;i<items.length;i++) { if(items[i].status==='ok') { valid++; } }
     return valid+' / '+items.length+' amb estat';
   }
+  function climateReading(entity) {
+    if(!state.connected || entity.status!=='ok' || entity.state===null) { return '—'; }
+    if(!/^-?\d+(?:\.\d+)?$/.test(entity.state)) { return '—'; }
+    var unit=(entity.attributes||{}).unit_of_measurement;
+    return entity.state+(unit?' '+unit:'');
+  }
+  function renderClimate(parent) {
+    var sensors=byCategory('climate'), groups=[], i, j, room, matches, card, reading, metric;
+    var label=el('h2','section-label','TEMPERATURA I HUMITAT');
+    label.appendChild(el('span','',state.connected?sensors.length+' '+(sensors.length===1?'sensor configurat':'sensors configurats'):'Esperant connexió'));
+    parent.appendChild(label);
+    for(i=0;i<ROOMS.length;i++) { groups.push({id:ROOMS[i].id,name:ROOMS[i].name}); }
+    groups.push({id:null,name:'Sense habitació assignada'});
+    var grid=el('div','climate-grid');
+    for(i=0;i<groups.length;i++) {
+      room=groups[i]; matches=[];
+      for(j=0;j<sensors.length;j++) { if((sensors[j].room||null)===room.id) { matches.push(sensors[j]); } }
+      if(!matches.length) { continue; }
+      card=el('section','climate-card'); card.appendChild(el('h3','climate-room',room.name));
+      for(j=0;j<matches.length;j++) {
+        metric=(matches[j].attributes||{}).device_class;
+        reading=el('div','climate-reading');
+        reading.appendChild(icon(metric==='temperature'?'thermometer':'humidity'));
+        reading.appendChild(el('span','climate-kind',metric==='temperature'?'Temperatura':'Humitat'));
+        reading.appendChild(el('strong','climate-value',climateReading(matches[j])));
+        reading.appendChild(el('span','climate-name',matches[j].name));
+        if(matches[j].status!=='ok'||!state.connected) { reading.appendChild(el('span','climate-issue',stateText(matches[j]))); }
+        else if(climateReading(matches[j])==='—') { reading.appendChild(el('span','climate-issue','Lectura no vàlida')); }
+        card.appendChild(reading);
+      }
+      grid.appendChild(card);
+    }
+    if(!sensors.length) {
+      var emptyState=el('div','empty-state');
+      emptyState.appendChild(el('h3','',state.connected?'Encara no hi ha lectures ambientals.':'Esperant dades de Home Assistant.'));
+      emptyState.appendChild(el('p','',state.connected?'Afegeix els IDs dels sensors de temperatura i humitat a entity_ids. Home Assistant ha de publicar device_class: temperature o humidity. Assigna cada sensor a una habitació amb room_assignments.':'Quan es recuperi la connexió, apareixeran els sensors ambientals configurats.'));
+      parent.appendChild(emptyState);
+    } else { parent.appendChild(grid); }
+  }
   function renderOverview(parent) {
     var label=el('h2','section-label','D’UN COP D’ULL'); label.appendChild(el('span','', state.demo?'Llums simulats':'Només lectures reals')); parent.appendChild(label);
     var grid=el('div','summary-grid');
-    [{id:'lights',name:'Il·luminació',icon:'light',note:'Llums configurats'}, {id:'security',name:'Seguretat',icon:'shield',note:'Entitats de seguretat configurades'}, {id:'water',name:'Aigua calenta',icon:'water',note:'Entitats d’aigua configurades'}, {id:'media',name:'Música i televisió',icon:'media',note:'Reproductors configurats'}, {id:'fans',name:'Ventiladors',icon:'fan',note:'Ventiladors configurats'}, {id:'switches',name:'Interruptors',icon:'light',note:'Interruptors configurats'}, {id:'scenes',name:'Escenes',icon:'spark',note:'Escenes configurades'}, {id:'other',name:'Altres dispositius',icon:'overview',note:'Altres entitats configurades'}].forEach(function(item) {
+    [{id:'climate',name:'Temperatura i humitat',icon:'thermometer',note:'Sensors ambientals configurats'}, {id:'lights',name:'Il·luminació',icon:'light',note:'Llums configurats'}, {id:'security',name:'Seguretat',icon:'shield',note:'Entitats de seguretat configurades'}, {id:'water',name:'Aigua calenta',icon:'water',note:'Entitats d’aigua configurades'}, {id:'media',name:'Música i televisió',icon:'media',note:'Reproductors configurats'}, {id:'fans',name:'Ventiladors',icon:'fan',note:'Ventiladors configurats'}, {id:'switches',name:'Interruptors',icon:'light',note:'Interruptors configurats'}, {id:'scenes',name:'Escenes',icon:'spark',note:'Escenes configurades'}, {id:'other',name:'Altres dispositius',icon:'overview',note:'Altres entitats configurades'}].forEach(function(item) {
       if(!byCategory(item.id).length) { return; }
-      var wrap=el('div','summary-wrap'), card=button('','summary-card',function() { openCategory(item.id,item.name); });
+      var wrap=el('div','summary-wrap'), card=button('','summary-card',function() { if(item.id==='climate') { navigate('climate'); } else { openCategory(item.id,item.name); } });
       card.appendChild(icon(item.icon)); card.appendChild(el('h3','',item.name)); card.appendChild(el('span','summary-value',summaryValue(item.id))); card.appendChild(el('span','summary-note',item.note)); wrap.appendChild(card); grid.appendChild(wrap);
     }); parent.appendChild(grid);
     parent.appendChild(button('Veure tots els dispositius','outline-button',function() { openCategory('all','Tots els dispositius'); }));
@@ -158,7 +236,9 @@
   function renderView() {
     var view=$('view'); empty(view); var buttons=document.querySelectorAll('[data-nav]'),i;
     for(i=0;i<buttons.length;i++) { var active=buttons[i].getAttribute('data-nav')===currentView; buttons[i].className='nav-button'+(active?' active':''); buttons[i].setAttribute('aria-current',active?'page':'false'); }
+    if(currentView!=='climate') { renderGlobalLights(view); }
     if(currentView==='rooms') { setHeading('EL TEU ESPAI','Casa, amb calma.',state.demo?'Previsualització · llums simulats':'Cada estança, al teu ritme.'); renderRooms(view); }
+    else if(currentView==='climate') { setHeading('EL CONFORT DE CASA','Temperatura i humitat.','Lectures de cada habitació.'); renderClimate(view); }
     else { setHeading('LA CASA, D’UN COP D’ULL','Tot al seu lloc.',state.demo?'Previsualització · llums simulats':'L’estat de casa, sense presses.'); renderOverview(view); }
     renderStatus();
   }
@@ -301,7 +381,7 @@
     section=el('div','settings-section'); section.appendChild(el('h3','','Connexió')); section.appendChild(el('p','muted',state.demo?'Previsualització amb llums ficticis. No hi ha connexió amb Home Assistant ni controls actius.':(state.preview?'Previsualització local. No hi ha dades de Home Assistant ni controls actius.':(state.connected?'Home Assistant connectat.':'Pendent de connectar amb Home Assistant.')))); section.appendChild(el('p','muted',state.live_updates?'Canvis d’estat en directe actius.':(state.connected?'Connexió d’esdeveniments reconnectant; comprovació de seguretat cada 30 segons.':'Esperant la connexió d’esdeveniments.'))); section.appendChild(el('p','muted',window.location.protocol==='https:'?'Transport HTTPS.':'Transport HTTP local, sense xifrat.'));
     section.appendChild(button('Comprova la connexió','action-button',function() { refresh(true); })); section.appendChild(button('Informe de verificació','action-button',showAudit));
     if(authenticated&&!state.preview) { section.appendChild(button('Tanca la sessió','action-button',function() { request('POST','./api/logout',{},function(error) { if(error) { toast(error); return; } requireLogin(); }); })); }
-    parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.0.11 · Estat en directe via WebSocket de Home Assistant.'));
+    parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.0.11 · Actualitzacions en directe de Home Assistant.'));
   }
   function showAudit() {
     var parent=openModal('Verificació','CONNEXIÓ I CAPACITATS','audit','audit'); parent.appendChild(el('p','info-box','Informe de lectura per completar la configuració. No inclou credencials.')); var output=el('pre','audit-json','Carregant…'); parent.appendChild(output);
@@ -338,15 +418,20 @@
     },30000);
   }
   function schedulePoll() { clearTimeout(pollTimer); if(!document.hidden&&(authenticated||state.preview)) { pollTimer=setTimeout(function() { refresh(false); },POLL_INTERVAL); } }
+  function visualSignature() {
+    return JSON.stringify({connected:state.connected,preview:state.preview,demo:state.demo,entities:state.entities,live_updates:state.live_updates});
+  }
   function refresh(force) {
     if(loading) { pendingUpdate=true; return; } if(!authenticated&&!state.preview) { session(); return; }
-    loading=true;
+    var before=visualSignature(); loading=true;
     request('GET','./api/state',null,function(error,data,status) {
       loading=false;
       if(status===401) { requireLogin(); return; }
       if(error) { state.connected=false; state.error=error; state.fetched_at=null; if(force) { toast(error); } }
       else { state=data; state.entities=state.entities||[]; }
-      renderView(); refreshModal(); schedulePoll(); listenForUpdates();
+      if(before!==visualSignature()) { renderView(); refreshModal(); }
+      else { renderStatus(); }
+      schedulePoll(); listenForUpdates();
       if(pendingUpdate) { pendingUpdate=false; refresh(false); }
     });
   }

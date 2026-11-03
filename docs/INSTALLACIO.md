@@ -71,6 +71,7 @@ A la pestanya **Configuració** de Glass Rooms:
 |---|---|
 | `light_entity_ids` | Llista de qualsevol nombre d'IDs `light.*`, incloses llums noves. |
 | `entity_ids` | Llista opcional d'altres entitats de qualsevol domini, com sensors, interruptors, escenes o ventiladors. |
+| Sensors ambientals | Afegeix els IDs reals `sensor.*` de temperatura i humitat a `entity_ids`. Han de publicar `device_class` igual a `temperature` o `humidity`; el mòdul Clima els detecta automàticament. |
 | `panel_password` | Una contrasenya única de 12 caràcters com a mínim, introduïda només aquí. No és la contrasenya de Home Assistant. |
 | `allowed_hosts` | L'adreça exacta amb què obriràs el panell, inclòs el port si escau: `ADREÇA_HA:8099` per a la URL inicial. Afegeix un nom local només si l'utilitzes realment. Sense `http://` ni rutes. |
 | `allowed_networks` | La xarxa CIDR real de casa, o IPs concretes `/32` amb reserva DHCP. No es pot deduir la màscara només de l'adreça `ADREÇA_HA`. Consulta-la al router. |
@@ -81,6 +82,8 @@ A la pestanya **Configuració** de Glass Rooms:
 | `tls_certfile`, `tls_keyfile` | Noms de fitxer a `/ssl` per HTTPS, o buits si has triat HTTP amb els límits anteriors. |
 
 Aquest fragment conté només camps no secrets i conserva els bloquejos. **No és una configuració completa per arrencar**: falta introduir la contrasenya privadament i configurar la xarxa real.
+
+Per al sensor del menjador, consulta a Home Assistant els IDs reals de les seves entitats de temperatura i humitat. Afegeix tots dos IDs a `entity_ids` i cadascun seguit de `:menjador` a `room_assignments` (per exemple, `sensor.menjador_temperatura:menjador` si aquest fos l'ID real). Quan incorporis sensors a altres estances, repeteix-ho amb el nom de l'habitació corresponent. No cal afegir-los a `verified_actions`: les lectures són de només consulta.
 
 ```yaml
 allowed_hosts:

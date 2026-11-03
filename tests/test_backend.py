@@ -198,6 +198,29 @@ class CapabilityTests(unittest.TestCase):
         for state in ["unavailable", "unknown"]:
             self.assertEqual(entity(SHOWERS, self.settings, raw(SHOWERS, state), {})["status"], state)
 
+    def test_temperature_and_humidity_sensors_become_climate_readings(self):
+        temperature = "sensor.menjador_temperature"
+        humidity = "sensor.menjador_humidity"
+        settings = Settings(config(entity_ids=[temperature, humidity, SHOWERS], room_assignments=[
+            temperature + ":menjador", humidity + ":menjador"]))
+        states = {
+            **raw(temperature, "21.4", device_class="temperature", unit_of_measurement="°C"),
+            **raw(humidity, "48", device_class="humidity", unit_of_measurement="%"),
+            **raw(SHOWERS, "3", device_class="water"),
+        }
+        items = {item["entity_id"]: item for item in entities_for(states, {}, settings, True)}
+        self.assertEqual(items[temperature]["category"], "climate")
+        self.assertEqual(items[temperature]["room"], "menjador")
+        self.assertEqual(items[temperature]["state"], "21.4")
+        self.assertEqual(items[temperature]["attributes"]["unit_of_measurement"], "°C")
+        self.assertEqual(items[humidity]["category"], "climate")
+        self.assertEqual(items[humidity]["state"], "48")
+        self.assertEqual(items[SHOWERS]["category"], "other")
+        self.assertEqual(items[temperature]["controls"], [])
+        unavailable = entity(temperature, settings, raw(temperature, "unavailable", device_class="temperature"), {})
+        self.assertEqual(unavailable["category"], "climate")
+        self.assertEqual(unavailable["status"], "unavailable")
+
     def test_water_only_published_operation_modes(self):
         available = services("water_heater", set_operation_mode=["operation_mode"], set_temperature=["temperature"])
         item = entity(WATER, self.settings, raw(WATER, "eco", supported_features=3,
@@ -415,7 +438,7 @@ class HTTPTests(unittest.TestCase):
         self.app.sessions[token]["expires"] = time.monotonic() - 1
         self.assertEqual(self.call("/api/state")[0], 401)
 
-    def test_only_allowlisted_public_files_and_no_cache(self):
+    def test_only_allowlisted_public_files_and_cache_policy(self):
         for path in ["/data/options.json", "/server.py", "/../catalog.py", "/assets/../../server.py", "/%2e%2e/server.py"]:
             self.assertEqual(self.call(path)[0], 404)
         status, _, headers = self.call("/api/session")
@@ -423,6 +446,12 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(headers["Cache-Control"], "no-store")
         self.assertEqual(headers["X-Frame-Options"], "DENY")
         self.assertNotIn("Access-Control-Allow-Origin", headers)
+        status, _, headers = self.call("/assets/cuina.svg?v=1.0.16")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Cache-Control"], "public, max-age=86400")
+        status, _, headers = self.call("/app.js?v=1.0.16")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Cache-Control"], "no-store")
 
     def test_login_rate_limit_and_body_size_limit(self):
         for _ in range(5):
