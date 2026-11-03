@@ -36,43 +36,54 @@ function render(entities, connected = true) {
   window.test.setState({entities, connected, preview: false});
   const parent = element('div');
   window.test.renderGlobalLights(parent);
-  return parent.children[0];
+  return parent.children[0].children;
 }
 
-let control = render([light('light.kitchen', 'off'), light('light.unassigned', 'off')]);
-assert.equal(control.disabled, false);
-assert.equal(control.children[1].children[0].textContent, 'Encén tots els llums');
-assert.equal(control.children[1].children[1].textContent, '2 online · 0 offline');
-control = render([light('light.kitchen', 'on'), light('light.unassigned', 'off')]);
-assert.equal(control.disabled, false);
-assert.equal(control.children[1].children[0].textContent, 'Apaga tots els llums');
+let controls = render([light('light.kitchen', 'off'), light('light.unassigned', 'off')]);
+assert.equal(controls[0].disabled, false);
+assert.equal(controls[1].disabled, false);
+assert.equal(controls[0].children[1].children[0].textContent, 'Encén tots els llums');
+assert.equal(controls[1].children[1].children[0].textContent, 'Apaga tots els llums');
+assert.equal(controls[0].children[1].children[1].textContent, '2 de 2 amb ordre verificada');
+controls = render([light('light.kitchen', 'on'), light('light.unassigned', 'off')]);
 const sent = [];
 window.test.setRequest((method, path, body, callback) => {
   if(method === 'POST') { sent.push({path, body}); callback(null, {ok: true}, 200); }
 });
-control.listeners.click();
+controls[1].listeners.click();
 assert.equal(sent.length, 1);
 assert.equal(sent[0].path, './api/lights');
-assert.equal(sent[0].body.entity_ids.join(','), 'light.kitchen');
+assert.equal(sent[0].body.entity_ids.join(','), 'light.kitchen,light.unassigned');
 assert.equal(sent[0].body.action, 'turn_off');
 assert.equal(toast.className, 'toast hidden');
 const alreadyOff = light('light.unassigned', 'off');
 alreadyOff.controls[1].enabled = false;
-assert.equal(render([light('light.kitchen', 'on'), alreadyOff]).disabled, false);
+controls = render([light('light.kitchen', 'on'), alreadyOff]);
+assert.equal(controls[1].disabled, false);
+assert.equal(controls[1].children[1].children[0].textContent, 'Apaga llums disponibles');
 const partial = render([light('light.kitchen', 'on'), light('light.living', 'on')]);
 const attempted = [];
 window.test.setRequest((method, path, body, callback) => {
   if(method !== 'POST') { return; }
   attempted.push(body.entity_ids.join(','));
-  callback(null, {ok: false, error: 'Primera llum no disponible.'}, 200);
+  callback(null, {ok: false, succeeded: 1, failed: 1, error: 'Primera llum no disponible.'}, 200);
 });
-partial.listeners.click();
+partial[1].listeners.click();
 assert.deepEqual(attempted, ['light.kitchen,light.living']);
-assert.equal(toast.textContent, 'Primera llum no disponible.');
-assert.equal(render([light('light.kitchen', 'off', false)]).disabled, true);
-assert.equal(render([light('light.kitchen', 'off', true, 'unavailable')]).disabled, true);
-assert.equal(render([light('light.kitchen', 'off')], false).disabled, true);
-assert.equal(render([]).disabled, true);
+assert.equal(toast.textContent, 'Ordres enviades: 1. Sense enviar: 1. Primera llum no disponible.');
+const offline = light('light.offline', 'off', true, 'unavailable');
+const available = render([light('light.kitchen', 'on'), offline]);
+const onlyReady = [];
+window.test.setRequest((method, path, body, callback) => {
+  if(method === 'POST') { onlyReady.push(body.entity_ids.join(',')); callback(null, {ok: true, succeeded: 1, failed: 0}, 200); }
+});
+available[1].listeners.click();
+assert.deepEqual(onlyReady, ['light.kitchen']);
+assert.match(toast.textContent, /Llums omesos: 1/);
+assert.equal(render([light('light.kitchen', 'off', false)])[0].disabled, true);
+assert.equal(render([light('light.kitchen', 'off', true, 'unavailable')])[0].disabled, true);
+assert.equal(render([light('light.kitchen', 'off')], false)[0].disabled, true);
+assert.equal(render([])[0].disabled, true);
 
 const living = light('light.living', 'on'); living.room = 'menjador';
 const missing = light('light.missing', null, false, 'unavailable'); missing.room = 'menjador';

@@ -309,9 +309,14 @@ class ActionTests(unittest.TestCase):
         self.assertEqual([call[2]["entity_id"] for call in fake.calls], [LIGHT, other])
         fake.calls.clear()
         fake.states[other]["state"] = "unavailable"
-        with self.assertRaises(PublicError):
-            app.lights_action({"entity_ids": [LIGHT, other], "action": "turn_off"})
-        self.assertEqual(fake.calls, [])
+        partial = app.lights_action({"entity_ids": [LIGHT, other], "action": "turn_off"})
+        self.assertEqual((partial["succeeded"], partial["failed"]), (1, 1))
+        self.assertEqual([call[2]["entity_id"] for call in fake.calls], [LIGHT])
+        limited = Settings(config(light_entity_ids=[LIGHT, other], verified_actions=[LIGHT + ":turn_off"]))
+        unverified = FakeHA({**raw(LIGHT), **raw(other)}, services("light", turn_off=[]))
+        partial = App(limited, unverified).lights_action({"entity_ids": [LIGHT, other], "action": "turn_off"})
+        self.assertEqual((partial["succeeded"], partial["failed"]), (1, 1))
+        self.assertEqual([call[2]["entity_id"] for call in unverified.calls], [LIGHT])
         class FailingHA(FakeHA):
             def call(self, domain, service, payload):
                 if payload["entity_id"] == other:

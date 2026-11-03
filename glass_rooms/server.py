@@ -802,20 +802,27 @@ class App:
             entities = {item["entity_id"]: item for item in entities_for(states, services, self.settings, True)}
             self.apply_rejected_states(entities.values(), True)
             calls = []
+            failed, first_error = 0, None
             for entity_id in ids:
                 entity = entities[entity_id]
-                service, payload = action_payload(entity, {"entity_id": entity_id, "action": action})
-                calls.append((entity, service, payload))
-            succeeded, first_error = 0, None
+                try:
+                    service, payload = action_payload(entity, {"entity_id": entity_id, "action": action})
+                    calls.append((entity, service, payload))
+                except PublicError as exc:
+                    failed += 1
+                    if first_error is None:
+                        first_error = exc.message
+            succeeded = 0
             for entity, service, payload in calls:
                 try:
                     self.client.call(entity["domain"], service, payload)
                     succeeded += 1
                 except PublicError as exc:
+                    failed += 1
                     self.mark_rejected_state(entity)
                     if first_error is None:
                         first_error = exc.message
-        return {"ok": first_error is None, "succeeded": succeeded, "failed": len(ids) - succeeded,
+        return {"ok": failed == 0, "succeeded": succeeded, "failed": failed,
                 "error": first_error}
 
 

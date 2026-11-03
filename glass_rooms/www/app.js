@@ -30,6 +30,7 @@
   var currentView = 'rooms', csrf = '', authenticated = false, loading = false, busy = false;
   var loginPin = '', loginSubmitting = false;
   var pollTimer = null, toastTimer = null, modal = null, previousFocus = null, theme = 'auto', glass = false;
+  var actionRefreshTimers = [], pendingConfirmation = null;
   var updateXhr = null, updateRetryTimer = null, updateRevision = 0, updateGeneration = 0, pendingUpdate = false, pendingForce = false;
   var historyState = {hours:24,series:{},loadedAt:0,loading:false,error:''}, historyXhr = null, historyGeneration = 0;
   var POLL_INTERVAL = 30000;
@@ -157,26 +158,40 @@
     }
     return selected;
   }
-  function renderGlobalLights(parent) {
-    var lights=[], lit=false, i;
-    for(i=0;i<state.entities.length;i++) {
-      if(state.entities[i].domain==='light') {
-        lights.push(state.entities[i]);
-        if(state.entities[i].status==='ok'&&state.entities[i].state==='on') { lit=true; }
+  function availableLights(lights,action) {
+    var ready=[],i,j,controls;
+    for(i=0;i<lights.length;i++) {
+      if(lights[i].status!=='ok') { continue; }
+      controls=lights[i].controls||[];
+      for(j=0;j<controls.length;j++) {
+        if(controls[j].action===action&&controls[j].enabled) { ready.push(lights[i]); break; }
       }
     }
-    var action=lit?'turn_off':'turn_on';
-    var pending=lightsNeedingAction(lights,action);
-    var label=lights.length?(lit?'Apaga tots els llums':'Encén tots els llums'):'Llums pendents de configurar';
-    var control=button('','all-lights-control'+(lit?' all-lights-on':''),function() { turnRoomLights('tota la casa',pending,action); });
-    control.appendChild(icon(lit?'lightOn':'light'));
-    var content=el('span','all-lights-content');
-    content.appendChild(el('span','all-lights-label',label));
-    content.appendChild(el('span','all-lights-note',lights.length?lightCounts(lights):'Afegeix llums a la configuració del panell'));
-    control.appendChild(content);
-    control.disabled=!state.connected||state.preview||busy||!canToggleLights(pending,action);
-    control.setAttribute('title',control.disabled?'Control pendent de connexió o verificació':label);
-    parent.appendChild(control);
+    return ready;
+  }
+  function renderGlobalLights(parent) {
+    var lights=[], i;
+    for(i=0;i<state.entities.length;i++) {
+      if(state.entities[i].domain==='light') { lights.push(state.entities[i]); }
+    }
+    var row=el('div','all-lights-row');
+    [{action:'turn_on',label:'Encén',icon:'lightOn'},{action:'turn_off',label:'Apaga',icon:'light'}].forEach(function(option) {
+      var ready=availableLights(lights,option.action), skipped=lights.length-ready.length;
+      var label=option.label+(skipped?' llums disponibles':' tots els llums');
+      var control=button('','all-lights-control'+(option.action==='turn_on'?' all-lights-on':''),function() {
+        turnRoomLights('tota la casa',ready,option.action,skipped);
+      });
+      control.appendChild(icon(option.icon));
+      var content=el('span','all-lights-content');
+      content.appendChild(el('span','all-lights-label',lights.length?label:'Llums pendents de configurar'));
+      content.appendChild(el('span','all-lights-note',lights.length?(ready.length?ready.length+' de '+lights.length+' amb ordre verificada':
+        'Cap llum disponible amb aquesta ordre verificada'):'Afegeix llums a la configuració del panell'));
+      control.appendChild(content);
+      control.disabled=!state.connected||state.preview||busy||!ready.length;
+      control.setAttribute('title',control.disabled?'Sense llums disponibles amb aquesta ordre verificada':label);
+      row.appendChild(control);
+    });
+    parent.appendChild(row);
   }
   function renderRooms(parent) {
     var label=el('h2','section-label','LES HABITACIONS'); label.appendChild(el('span','', '8 espais')); parent.appendChild(label);
@@ -184,7 +199,7 @@
     ROOMS.forEach(function(room) {
       var wrap=el('div','room-wrap'), card=button('','room-card',function() { openRoom(room.id); });
       card.appendChild(el('h3','room-title',room.name));
-      var art=el('img','room-art'); art.src='./assets/'+room.id+'.svg?v=1.1.1'; art.alt=''; art.setAttribute('aria-hidden','true'); card.appendChild(art);
+      var art=el('img','room-art'); art.src='./assets/'+room.id+'.svg?v=1.1.2'; art.alt=''; art.setAttribute('aria-hidden','true'); card.appendChild(art);
       var entities=byRoom(room.id), lit=false, roomLights=[], canToggle, toggleAction, i;
       for(i=0;i<entities.length;i++) {
         if(entities[i].domain==='light') {
@@ -448,9 +463,12 @@
       if(error) { toast(error); } else { hideToast(); }
       if(modal&&modal.type==='alarm') { openCategory('security','Seguretat'); }
       refresh(true);
+      if(!error&&entity.domain==='light'&&(control.action==='turn_on'||control.action==='turn_off')) {
+        scheduleActionRefreshes([entity.entity_id],control.action);
+      }
     }); payload.code=null; code=null;
   }
-  function turnRoomLights(roomName,lights,action) {
+  function turnRoomLights(roomName,lights,action,skipped) {
     var i, ids=[];
     if(busy||!state.connected||state.preview||!lights.length) { return; }
     for(i=0;i<lights.length;i++) {
@@ -466,10 +484,34 @@
       busy=false;
       if(status===401) { hideToast(); requireLogin(); return; }
       if(error) { toast(error); }
-      else if(data&&!data.ok) { toast(data.error||'Alguns llums no han canviat.'); }
+      else if(data&&!data.ok) { toast('Ordres enviades: '+data.succeeded+'. Sense enviar: '+data.failed+'. '+(data.error||'')); }
+      else if(skipped) { toast('Ordres enviades: '+data.succeeded+'. Llums omesos: '+skipped+' (no disponibles o sense verificació).'); }
       else { hideToast(); }
       refresh(true);
+      if(data&&data.succeeded) { scheduleActionRefreshes(ids,action); }
     },60000);
+  }
+  function clearActionRefreshes() {
+    for(var i=0;i<actionRefreshTimers.length;i++) { clearTimeout(actionRefreshTimers[i]); }
+    actionRefreshTimers=[]; pendingConfirmation=null;
+  }
+  function scheduleActionRefreshes(ids,action) {
+    clearActionRefreshes();
+    pendingConfirmation={ids:ids.slice(),target:action==='turn_on'?'on':'off'};
+    [2000,5000,10000,20000,30000].forEach(function(delay) {
+      actionRefreshTimers.push(setTimeout(function() { if(pendingConfirmation&&!document.hidden) { refresh(false); } },delay));
+    });
+  }
+  function checkActionConfirmation() {
+    if(!pendingConfirmation||!state.connected) { return; }
+    for(var i=0;i<pendingConfirmation.ids.length;i++) {
+      var found=false;
+      for(var j=0;j<state.entities.length;j++) {
+        if(state.entities[j].entity_id===pendingConfirmation.ids[i]&&state.entities[j].status==='ok'&&state.entities[j].state===pendingConfirmation.target) { found=true; break; }
+      }
+      if(!found) { return; }
+    }
+    clearActionRefreshes();
   }
   function openSettings() {
     var parent=openModal('Al teu gust.','PREFERÈNCIES','settings','settings'), section=el('div','settings-section');
@@ -480,7 +522,7 @@
     section=el('div','settings-section'); section.appendChild(el('h3','','Connexió')); section.appendChild(el('p','muted',state.demo?'Previsualització amb llums ficticis. No hi ha connexió amb Home Assistant ni controls actius.':(state.preview?'Previsualització local. No hi ha dades de Home Assistant ni controls actius.':(state.connected?'Home Assistant connectat.':'Pendent de connectar amb Home Assistant.')))); section.appendChild(el('p','muted',state.live_updates?'Canvis d’estat en directe actius.':(state.connected?'Connexió d’esdeveniments reconnectant; comprovació de seguretat cada 30 segons.':'Esperant la connexió d’esdeveniments.'))); section.appendChild(el('p','muted',window.location.protocol==='https:'?'Transport HTTPS.':'Transport HTTP local, sense xifrat.'));
     section.appendChild(button('Comprova la connexió','action-button',function() { refresh(true); })); section.appendChild(button('Informe de verificació','action-button',showAudit));
     if(authenticated&&!state.preview) { section.appendChild(button('Tanca la sessió','action-button',function() { request('POST','./api/logout',{},function(error) { if(error) { toast(error); return; } requireLogin(); }); })); }
-    parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.1.1 · Actualitzacions en directe de Home Assistant.'));
+    parent.appendChild(section); parent.appendChild(el('p','info-box','Glass Rooms 1.1.2 · Actualitzacions en directe de Home Assistant.'));
   }
   function showAudit() {
     var parent=openModal('Verificació','CONNEXIÓ I CAPACITATS','audit','audit'); parent.appendChild(el('p','info-box','Informe de lectura per completar la configuració. No inclou credencials.')); var output=el('pre','audit-json','Carregant…'); parent.appendChild(output);
@@ -527,7 +569,7 @@
       loading=false;
       if(status===401) { requireLogin(); return; }
       if(error) { state.connected=false; state.error=error; state.fetched_at=null; if(force) { toast(error); } }
-      else { state=data; state.entities=state.entities||[]; }
+      else { state=data; state.entities=state.entities||[]; checkActionConfirmation(); }
       if(force||before!==visualSignature()) { renderView(); refreshModal(); }
       else { renderStatus(); }
       schedulePoll(); listenForUpdates();
@@ -535,7 +577,7 @@
     });
   }
   function requireLogin() {
-    authenticated=false; csrf=''; clearTimeout(pollTimer); stopUpdateListener(); updateRevision=0; closeModal();
+    authenticated=false; csrf=''; clearTimeout(pollTimer); clearActionRefreshes(); stopUpdateListener(); updateRevision=0; closeModal();
     if(historyXhr) { historyXhr.abort(); historyXhr=null; } historyGeneration++; historyState={hours:24,series:{},loadedAt:0,loading:false,error:''};
     state={connected:false,preview:false,entities:[],fetched_at:null}; renderView();
     $('login-layer').className='login-layer'; loginPin=''; loginSubmitting=false; updatePinDisplay();
@@ -591,10 +633,10 @@
     init();
     var cssReady=window.getComputedStyle && window.getComputedStyle($('css-probe'),null).width==='9px';
     if(cssReady) { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.done(); } else { $('boot-status').hidden=true; } }
-    else { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail('B4 · CSS no aplicat'); } else { $('boot-status').textContent='Glass Rooms 1.1.1: no s’ha carregat style.css.'; } }
+    else { if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail('B4 · CSS no aplicat'); } else { $('boot-status').textContent='Glass Rooms 1.1.2: no s’ha carregat style.css.'; } }
   } catch(startupError) {
     if(window.GlassRoomsBoot) { window.GlassRoomsBoot.fail(startupError.name || 'Error'); return; }
     $('boot-status').hidden=false;
-    $('boot-status').textContent='Glass Rooms 1.1.1: no s’ha pogut iniciar la interfície. Torna a carregar la pàgina i comprova que tots els fitxers són de la mateixa versió.';
+    $('boot-status').textContent='Glass Rooms 1.1.2: no s’ha pogut iniciar la interfície. Torna a carregar la pàgina i comprova que tots els fitxers són de la mateixa versió.';
   }
 }());
