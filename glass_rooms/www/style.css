@@ -39,7 +39,9 @@ h3 { font-size: 17px; font-weight: 500; }
 .clock-block { position: relative; flex: 0 0 auto; text-align: right; }
 .clock-block time { font-size: 30px; font-weight: 300; letter-spacing: -1px; font-variant-numeric: tabular-nums; }
 .clock-block #date { display: block; font-size: 11px; color: #818577; margin-top: -2px; }
-.time-icon { color: #939477; width: 20px; height: 20px; margin: 0 10px 7px 0; }
+.time-icon { display: inline-block; color: #939477; width: 44px; height: 44px; margin: 0 3px 0 0; vertical-align: middle; border-radius: 12px; }
+.time-icon:hover { background: rgba(123,139,102,.12); }
+.time-icon .icon { width: 23px; height: 23px; }
 .heading-row { position: static; margin: 0; }
 .heading-row .eyebrow { display: none; }
 .eyebrow { color: #8a8e7d; font-size: 10px; letter-spacing: 2.4px; font-weight: 600; margin-bottom: 11px; }
@@ -169,6 +171,7 @@ select { width: 100%; margin: 4px 0; }
 .night .room-meta.has-issue,.night .device-state.issue { color: #dbbc8a; }
 .night .summary-note,.night .device-note,.night .entity-id,.night .empty-state p { color: #a8babd; }
 .night .summary-card .icon,.night .time-icon { color: #b4c9c3; }
+.night .time-icon:hover { background: rgba(180,201,195,.14); }
 .night .climate-card { background: #2d414c; border-color: #445762; }
 .night .climate-reading { border-color: #445762; }
 .night .climate-kind,.night .climate-name { color: #b2beb6; }
@@ -197,7 +200,7 @@ select { width: 100%; margin: 4px 0; }
 @media (max-width: 820px) { #main { padding: 24px; } .topbar { min-height: 105px; } .room-wrap { width: 50%; } .room-card { height: 238px; } .room-art { height: 151px; } .room-meta { font-size: 11px; } .page-footer>span:last-child { float: none; display: block; } }
 @media (min-width: 521px) and (max-width: 820px) { .room-wrap { padding-bottom: 8px; } .room-card { height: 160px; padding: 10px 13px 8px; } .room-art { height: 95px; margin: -5px auto -3px; } }
 @media (max-width: 820px) { .climate-card { width: calc(100% - 16px); } }
-@media (max-width: 520px) { .rail { width: 65px; padding: 25px 5px; } .brand-mark { margin-bottom: 36px; } .nav-button { width: 54px; height: 60px; border-radius: 14px; } #main { margin-left: 65px; padding: 18px 16px; } .topbar { min-height: 100px; } .clock-block time { font-size: 25px; } .time-icon,.clock-block #date { display: none; } h1 { font-size: 28px; } .page-subtitle { font-size: 12px; } .room-wrap { width: 100%; } .room-card { height: 255px; } .room-art { height: 166px; } .room-meta { font-size: 11px; } .summary-wrap { width: 100%; } .drawer { top: 8px; right: 8px; bottom: 8px; left: 8px; width: auto; } .drawer.room-modal { top: 50%; right: auto; bottom: auto; left: 50%; width: calc(100% - 24px); max-width: none; height: 84vh; max-height: calc(100% - 24px); } .drawer-content { padding-left: 20px; padding-right: 20px; } .login-card { margin: 30px 15px; padding: 26px; } .toast { width: 86%; left: 7%; margin-left: 0; } .section-label span { display: none; } }
+@media (max-width: 520px) { .rail { width: 65px; padding: 25px 5px; } .brand-mark { margin-bottom: 36px; } .nav-button { width: 54px; height: 60px; border-radius: 14px; } #main { margin-left: 65px; padding: 18px 16px; } .topbar { min-height: 100px; } .clock-block time { font-size: 25px; } .time-icon { width: 36px; height: 36px; margin-right: 2px; } .clock-block #date { display: none; } h1 { font-size: 28px; } .page-subtitle { font-size: 12px; } .room-wrap { width: 100%; } .room-card { height: 255px; } .room-art { height: 166px; } .room-meta { font-size: 11px; } .summary-wrap { width: 100%; } .drawer { top: 8px; right: 8px; bottom: 8px; left: 8px; width: auto; } .drawer.room-modal { top: 50%; right: auto; bottom: auto; left: 50%; width: calc(100% - 24px); max-width: none; height: 84vh; max-height: calc(100% - 24px); } .drawer-content { padding-left: 20px; padding-right: 20px; } .login-card { margin: 30px 15px; padding: 26px; } .toast { width: 86%; left: 7%; margin-left: 0; } .section-label span { display: none; } }
 
 /* Opaque surfaces avoid old WebKit compositing and scroll-layer artefacts. */
 .rail { background-color: #f3f3e9; }

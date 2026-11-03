@@ -40,7 +40,7 @@ Els logs no inclouen cossos, PINs, capçaleres ni respostes de Core. El PIN d'ac
 | Vidre | Superfícies clares sense desenfocament per defecte | Sense desenfocament a la revisió 1.0.1; superfícies opaques |
 | Il·lustracions | Vuit SVG locals petits, sense filtres costosos | No són plànols ni ubicacions de dispositius |
 | Navegació | Botons grans, resum visible i finestres | El canvi de secció es fa amb els botons del menú |
-| Dia/nit | Hora local del navegador: dia entre 7 i 20 h | Es pot triar manualment; no es pressuposa la sortida o posta solar |
+| Dia/nit | Hora local del navegador: dia entre 7 i 20 h | El botó del sol o la lluna alterna el tema i desa la tria; també es pot seleccionar a Ajustos |
 | Fonts | Tipografia del sistema | No hi ha descàrregues externes |
 
 L'anàlisi ES5 no valida les API DOM ni els detalls de Safari. El navegador integrat modern i una mida de 1024 × 768 no emulen iOS 9 ni l'A5 de l'iPad mini 1. Encara s'han de provar TLS, confiança del certificat, teclat, cookies, zoom, rotació, memòria i rendiment al dispositiu. No es fa cap gestió de bloqueig o activació de pantalla.
