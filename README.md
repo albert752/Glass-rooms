@@ -1,6 +1,6 @@
 # Glass Rooms
 
-## Revisió 1.0.11
+## Revisió 1.0.12
 
 L’inventari és dinàmic i no incorpora IDs de cap instància. Afegeix les llums a `light_entity_ids` i altres entitats a `entity_ids`, directament a les opcions de l’aplicació a Home Assistant. `room_assignments` les situa a les habitacions i `verified_actions` declara quines accions poden aparèixer quan Home Assistant publica el servei corresponent.
 
