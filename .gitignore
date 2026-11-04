@@ -9,3 +9,5 @@ options.json
 *.crt
 *.log
 artifacts/
+ios/.sdk/
+ios/build/

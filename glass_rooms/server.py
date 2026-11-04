@@ -39,6 +39,7 @@ ROOT = Path(__file__).resolve().parent / "www"
 UPSTREAM = "http://supervisor/core/api"
 SESSION_SECONDS = 12 * 60 * 60
 COOKIE_NAME = "glass_rooms_session"
+APP_TOKEN_PATTERN = r"[A-Za-z0-9_-]{32,128}"
 MAX_BODY = 4096
 ARM_FEATURES = {
     "alarm_arm_home": (1, "Armar a casa"),
@@ -140,6 +141,7 @@ class Settings:
         self.tls_cert = self.tls_key = None
         self.pin_salt = secrets.token_bytes(32)
         self.pin_hash = b""
+        self.app_token_hash = b""
         self.catalog = CATALOG
         self.by_id = {item["entity_id"]: item for item in self.catalog}
         if preview:
@@ -157,7 +159,7 @@ class Settings:
             return
         if not isinstance(options, dict):
             raise ValueError("Les opcions han de ser un objecte JSON.")
-        known = {"panel_pin", "allowed_hosts", "allowed_networks", "verified_actions", "room_assignments",
+        known = {"panel_pin", "app_token", "allowed_hosts", "allowed_networks", "verified_actions", "room_assignments",
                  "light_entity_ids", "entity_ids",
                  "alarm_modes", "alarm_arm_code", "alarm_disarm_code", "tls_certfile", "tls_keyfile"}
         if set(options) - known:
@@ -166,6 +168,10 @@ class Settings:
         if not isinstance(pin, str) or not re.fullmatch(r"[0-9]{6,8}", pin):
             raise ValueError("Configureu panel_pin privat, de 6 a 8 dígits.")
         self.pin_hash = self.pin_digest(pin)
+        app_token = options.get("app_token", "")
+        if not isinstance(app_token, str) or (app_token and not re.fullmatch(APP_TOKEN_PATTERN, app_token)):
+            raise ValueError("app_token ha de quedar buit o tenir de 32 a 128 caràcters A-Z, a-z, 0-9, _ o -.")
+        self.app_token_hash = hashlib.sha256(app_token.encode("ascii")).digest() if app_token else b""
         self.allowed_hosts = {authority(v) for v in list_option(options, "allowed_hosts")}
         if not self.allowed_hosts:
             raise ValueError("Configureu allowed_hosts amb l'adreça exacta i el port del panell.")
@@ -234,6 +240,11 @@ class Settings:
     def check_pin(self, pin):
         return isinstance(pin, str) and bool(re.fullmatch(r"[0-9]{6,8}", pin)) and hmac.compare_digest(
             self.pin_hash, self.pin_digest(pin))
+
+    def check_app_token(self, token):
+        """The native app authenticates with a private bearer token instead of the PIN pad."""
+        return (bool(self.app_token_hash) and isinstance(token, str) and bool(re.fullmatch(APP_TOKEN_PATTERN, token))
+                and hmac.compare_digest(self.app_token_hash, hashlib.sha256(token.encode("ascii")).digest()))
 
     def allows_client(self, address):
         try:
@@ -904,6 +915,16 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(payload)
         self.close_connection = True
 
+    def bearer(self):
+        """Return the native-app token when the request uses one; browsers never send it."""
+        values = self.headers.get_all("Authorization", [])
+        if not values:
+            return None
+        scheme, _, token = values[0].partition(" ")
+        if len(values) != 1 or scheme != "Bearer" or not token:
+            raise PublicError("Capçalera d'autorització no admesa.", 401)
+        return token
+
     def guard(self, writing=False):
         if not self.app.settings.allows_client(self.client_address[0]):
             raise PublicError("Accés restringit a la xarxa local configurada.", 403)
@@ -914,7 +935,8 @@ class Handler(BaseHTTPRequestHandler):
             valid_host = False
         if not valid_host:
             raise PublicError("Host no autoritzat. Reviseu l'adreça i allowed_hosts.", 403)
-        if writing:
+        if writing and self.bearer() is None:
+            # Browser writes need the same origin; bearer requests carry no ambient credential.
             origins = self.headers.get_all("Origin", [])
             refers = self.headers.get_all("Referer", [])
             expected = self.app.settings.scheme + "://" + hosts[0].lower()
@@ -934,6 +956,12 @@ class Handler(BaseHTTPRequestHandler):
             raise PublicError("Ruta no admesa.", 400)
 
     def session(self, required=True):
+        token = self.bearer()
+        if token is not None:
+            if not self.app.settings.check_app_token(token):
+                self.app.rate_limit(self.client_address[0], "login", 5, 60)
+                raise PublicError("El token de l'app no és vàlid o l'accés de l'app no està configurat.", 401)
+            return "", {"csrf": "", "app": True}
         cookies = http.cookies.SimpleCookie()
         try:
             cookies.load(self.headers.get("Cookie", ""))
@@ -1036,6 +1064,8 @@ class Handler(BaseHTTPRequestHandler):
         path = parse.urlsplit(self.path).path
         if path not in {"/api/login", "/api/logout", "/api/action", "/api/lights"}:
             raise PublicError("Recurs no trobat.", 404)
+        if path in {"/api/login", "/api/logout"} and self.bearer() is not None:
+            raise PublicError("L'app nativa no utilitza sessions de navegador.", 400)
         if path == "/api/login":
             self.app.rate_limit(self.client_address[0], "login", 5, 60)
             body = self.read_json()
@@ -1049,7 +1079,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         token, session = self.session()
         csrf = self.headers.get_all("X-CSRF-Token", [])
-        if len(csrf) != 1 or not hmac.compare_digest(csrf[0], session["csrf"]):
+        if not session.get("app") and (len(csrf) != 1 or not hmac.compare_digest(csrf[0], session["csrf"])):
             raise PublicError("La sessió ha canviat. Torneu a carregar el panell.", 403)
         body = self.read_json()
         if path == "/api/logout":

@@ -50,3 +50,16 @@ La prova física posterior de l’usuari ha fallat a Safari 9.3.5 (sense estils,
 L’1 de novembre de 2026, l’usuari ha obert la versió 1.0.2 a l’iPad amb Safari iOS 9.3.5 i ha confirmat: **«Ara carrega les habitacions»**. És una prova comunicada per l’usuari, no una sessió remota de l’agent. Queden pendents les accions reals, els gestos, TLS al dispositiu i l’ús prolongat.
 
 Corregides dues declaracions de funció dins d’un bloc en mode estricte. El comprovador millorat falla amb el codi anterior i passa amb la correcció. Resultats: 41 proves Python, 4 casos de regressió sintàctica i 5 escenaris del bootstrap superats. Els tres scripts passen ES5 amb la restricció addicional de Safari 9. La pàgina de diagnòstic retorna D1–D7 correctes al navegador d’escriptori.
+
+## Revisió 1.1.4 — app nativa per a iPad
+
+4 de novembre de 2026, macOS 26 amb Command Line Tools (sense Xcode) i `iPhoneOS9.3.sdk`.
+
+| Comprovació executada | Resultat |
+|---|---|
+| Suite `tests/test_backend.py` amb les proves noves d'`app_token` | Superada: validació de l'opció, lectura i ordre amb Bearer sense cookie ni origen, rebuig de tokens erronis, Host i xarxa, límit d'intents |
+| `ios/scripts/test.sh` (lògica i client natius compilats per a macOS contra el servidor real i un Home Assistant simulat) | 46 comprovacions superades |
+| `ios/scripts/build.sh` | IPA armv7 + arm64, `-Werror`, enllaçat contra l'SDK 9.3, `LC_VERSION_MIN_IPHONEOS 9.0`, signatura ad hoc SHA-1 i SHA-256 |
+| Previsualització Mac Catalyst a 1024×768 i 768×1024 | Portada, resum, clima amb gràfica, calaix d'estança amb controls, llums, ajustos, tema de nit i primera configuració |
+
+No s'ha instal·lat l'app a l'iPad. La compilació Mac Catalyst no emula iOS 9 ni l'A5. Vegeu [APP_IOS.md](APP_IOS.md#què-sha-comprovat).

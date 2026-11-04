@@ -3,6 +3,7 @@
 import copy
 import http.client
 import io
+import ipaddress
 import json
 import secrets
 import shutil
@@ -111,6 +112,18 @@ class ConfigurationTests(unittest.TestCase):
             Settings(config(room_assignments=[LIGHT + ":cuina", LIGHT + ":menjador"]))
         settings = Settings(config(room_assignments=[LIGHT + ":cuina"]))
         self.assertEqual(settings.room_assignments, {LIGHT: "cuina"})
+
+    def test_app_token_is_optional_long_and_hashed(self):
+        for token in ["short", "a" * 31, "a" * 129, "token with spaces" * 3, 1234]:
+            with self.subTest(token=token), self.assertRaises(ValueError):
+                Settings(config(app_token=token))
+        token = secrets.token_urlsafe(32)
+        settings = Settings(config(app_token=token))
+        self.assertTrue(settings.check_app_token(token))
+        self.assertFalse(settings.check_app_token(token[:-1] + ("A" if token[-1] != "A" else "B")))
+        self.assertNotIn(token, repr(vars(settings)))
+        self.assertFalse(Settings(config()).check_app_token(token))
+        self.assertFalse(Settings(config(app_token="")).check_app_token(""))
 
     def test_tls_paths_require_pair_and_ssl_basename(self):
         for values in [{"tls_certfile": "cert.pem"}, {"tls_certfile": "../cert.pem", "tls_keyfile": "key.pem"},
@@ -538,6 +551,47 @@ class HTTPTests(unittest.TestCase):
         self.assertIsNone(self.app.get_session(token, "192.168.1.10"))
         self.app.sessions[token]["expires"] = time.monotonic() - 1
         self.assertEqual(self.call("/api/state")[0], 401)
+
+    def use_app_token(self):
+        token = secrets.token_urlsafe(32)
+        options = dict(self.options, app_token=token)
+        self.app.settings = Settings(options)
+        self.app.settings.allowed_hosts = {self.host}
+        return {"Authorization": "Bearer " + token}
+
+    def test_native_app_token_reads_and_writes_without_cookie_or_origin(self):
+        headers = self.use_app_token()
+        status, result, _ = self.call("/api/session", headers=headers)
+        self.assertEqual((status, result["authenticated"]), (200, True))
+        self.assertEqual(self.call("/api/state", headers=headers)[0], 200)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        conn.request("POST", "/api/action", json.dumps({"entity_id": LIGHT, "action": "turn_on"}),
+                     dict(headers, **{"Content-Type": "application/json"}))
+        response = conn.getresponse()
+        self.assertEqual(response.status, 200, response.read())
+        conn.close()
+        self.assertEqual(self.fake.calls, [("light", "turn_on", {"entity_id": LIGHT})])
+        self.assertEqual(self.call("/api/login", "POST", {"pin": self.options["panel_pin"]}, headers=headers)[0], 400)
+
+    def test_native_app_token_fails_closed(self):
+        valid = self.use_app_token()
+        for headers in [{"Authorization": "Bearer " + "x" * 40}, {"Authorization": "Basic abc"},
+                        {"Authorization": valid["Authorization"].lower()}]:
+            with self.subTest(headers=headers):
+                self.assertEqual(self.call("/api/state", headers=headers)[0], 401)
+        self.assertEqual(self.call("/api/state", headers=dict(valid, Host="evil.local"))[0], 403)
+        self.app.settings.allowed_networks = [ipaddress.ip_network("10.0.0.0/8")]
+        self.assertEqual(self.call("/api/state", headers=valid)[0], 403)
+        self.app.settings = Settings(self.options)
+        self.app.settings.allowed_hosts = {self.host}
+        self.assertEqual(self.call("/api/state", headers=valid)[0], 401)
+        self.assertEqual(self.fake.calls, [])
+
+    def test_native_app_token_attempts_are_rate_limited(self):
+        self.use_app_token()
+        statuses = [self.call("/api/state", headers={"Authorization": "Bearer " + "y" * 40})[0] for _ in range(6)]
+        self.assertEqual(statuses[:5], [401] * 5)
+        self.assertEqual(statuses[5], 429)
 
     def test_only_allowlisted_public_files_and_cache_policy(self):
         for path in ["/data/options.json", "/server.py", "/../catalog.py", "/assets/../../server.py", "/%2e%2e/server.py"]:

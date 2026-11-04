@@ -1,8 +1,10 @@
 # Glass Rooms
 
-## Revisió 1.1.3
+## Revisió 1.1.4
 
 **Migració des de 1.0.x:** a les opcions privades de Glass Rooms, elimina `panel_password` i configura `panel_pin` amb un PIN nou de 6 a 8 dígits. Desa les opcions i reinicia l'aplicació. La contrasenya antiga no es converteix automàticament en PIN; si falta `panel_pin`, el servidor no arrenca. L'accés al panell es fa amb el teclat numèric de la pàgina. El PIN d'alarma, si n'hi ha, continua sent independent.
+
+**Novetat 1.1.4:** [app nativa per a iPad amb iOS 9](docs/APP_IOS.md) (`ios/`), amb la mateixa interfície que el panell web però feta amb components UIKit. No té bloqueig amb codi: s'identifica amb un token privat nou, `app_token`, opcional i buit per defecte. Sense `app_token` res no canvia per al panell web.
 
 L’inventari és dinàmic i no incorpora IDs de cap instància. Afegeix les llums a `light_entity_ids` i altres entitats a `entity_ids`, directament a les opcions de l’aplicació a Home Assistant. `room_assignments` les situa a les habitacions i `verified_actions` declara quines accions poden aparèixer quan Home Assistant publica el servei corresponent.
 
@@ -48,5 +50,6 @@ Les habitacions són una estructura de navegació, no un mapa de dispositius con
 | [Inventari i preguntes pendents](docs/INVENTARI.md) | Abast exacte i decisions que falten |
 | [Arquitectura](docs/ARQUITECTURA.md) | Flux de dades, permisos i límits de compatibilitat |
 | [Manteniment](docs/MANTENIMENT.md) | Errors habituals, actualització, reversió i retirada |
+| `ios/` · [App per a iPad](docs/APP_IOS.md) | Client natiu UIKit per a iOS 9: compilació sense Xcode, sideload i configuració |
 
 La sintaxi ES5 i les comprovacions en un navegador actual ajuden a preparar la compatibilitat, però **no demostren que Safari d'iOS 9 funcioni al dispositiu**. La connexió HTTPS, els certificats, i el rendiment s'han de comprovar a l'iPad físic. El registre de validació diferencia aquestes proves de les comprovacions locals.
