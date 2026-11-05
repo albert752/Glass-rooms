@@ -14,6 +14,8 @@ NS_ASSUME_NONNULL_BEGIN
 // Small filled curve for the clock column; values are drawn left to right, oldest first.
 @interface GRSparklineView : UIView
 @property (nonatomic, copy) NSArray<NSNumber *> *values;
+// Humidity uses its own line colour; temperature uses the accent.
+@property (nonatomic) BOOL humidity;
 @end
 
 NS_ASSUME_NONNULL_END

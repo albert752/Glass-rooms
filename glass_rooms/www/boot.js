@@ -7,7 +7,7 @@
   function show(message) {
     if (!status) { return; }
     status.hidden = false;
-    status.textContent = 'Glass Rooms 1.1.10 · ' + message;
+    status.textContent = 'Glass Rooms 1.1.11 · ' + message;
   }
   function fail(message) {
     if (finished) { return; }

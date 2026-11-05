@@ -10,8 +10,8 @@ Està pensat per a un iPad fix a la paret i llegit a distància.
   - l'hora en gran i la data;
   - la temperatura i la humitat interiors, amb la mitjana dels sensors disponibles;
   - l'estat de l'alarma o, si no n'hi ha cap, els llums encesos;
-  - la corba de temperatura del primer sensor amb historial, amb el període triat a Clima (24 h per defecte).
-- **Navegació inferior:** Estances, Resum, Clima, Seguretat i Ajustos. El tema (automàtic, dia o nit) només es tria a Ajustos (des de 1.1.9).
+  - la corba de temperatura i, a sota, la d'humitat (des de 1.1.11), del primer sensor de cada tipus amb historial, amb el període triat a Clima (24 h per defecte).
+- **Navegació inferior:** Estances, Clima, Seguretat, Resum i Ajustos. Des de 1.1.11, lliscar el dit cap a l'esquerra o cap a la dreta passa a la pàgina següent o a l'anterior, en aquest ordre. No es llisca de pàgina si el dit comença sobre un control lliscant, un interruptor, la gràfica de clima o una tira de fitxes, ni amb un calaix obert. El tema (automàtic, dia o nit) només es tria a Ajustos (des de 1.1.9).
 - **Estances:** una fila per estança, amb un punt ambre si té llums encesos, la temperatura i un interruptor de llums. Tocar el nom obre el calaix de l'estança. Sota la llista hi ha «Encén tot» i «Apaga tot».
 - **Avisos:** les ordres de llums no mostren cap missatge en enviar-se ni quan funcionen; l'interruptor i l'estat actualitzat ja ho indiquen. Només apareix un avís si l'ordre falla o si s'ometen llums (des de 1.1.7).
 - **Clima (des de 1.1.8):** ocupa tota la pantalla i la columna del rellotge s'amaga. A dalt hi ha el període (6 h, 24 h, 7 dies, 1 mes) i una fitxa per sensor amb l'estança i la lectura actual. Sota hi ha el valor del punt triat en gran, amb el mínim, el màxim i la mitjana del període. La gràfica té eixos de valor i d'hora, i tocar-la o arrossegar-hi el dit mostra cada registre.

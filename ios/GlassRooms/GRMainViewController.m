@@ -70,16 +70,16 @@ static UIView *GRDot(BOOL lit) {
 
 #pragma mark - Controller
 
-@interface GRMainViewController () <UITextFieldDelegate>
+@interface GRMainViewController () <UITextFieldDelegate, UIGestureRecognizerDelegate>
 @property (nonatomic, strong, readwrite) GRPanelModel *model;
 @property (nonatomic) BOOL modalDirtyFlag;
 @end
 
 @implementation GRMainViewController {
   // Clock column
-  UILabel *_clock, *_date, *_status, *_sparkCaption;
+  UILabel *_clock, *_date, *_status, *_sparkCaption, *_humidityCaption;
   NSArray<UILabel *> *_statLabels, *_statValues;
-  GRSparklineView *_spark;
+  GRSparklineView *_spark, *_humiditySpark;
   NSMutableArray<GRNavButton *> *_navButtons;
   GRNavButton *_settingsButton;
   // Content column
@@ -164,11 +164,15 @@ static UIView *GRDot(BOOL lit) {
   _spark = [GRSparklineView new];
   _spark.isAccessibilityElement = YES;
   _sparkCaption = GRLabel(nil, GRFont(12, UIFontWeightRegular), t.muted);
+  _humiditySpark = [GRSparklineView new];
+  _humiditySpark.humidity = YES; _humiditySpark.isAccessibilityElement = YES;
+  _humidityCaption = GRLabel(nil, GRFont(12, UIFontWeightRegular), t.muted);
+  [self.view addSubview:_humiditySpark]; [self.view addSubview:_humidityCaption];
   _status = GRLabel(@"Esperant dades de casa", GRFont(12, UIFontWeightRegular), t.muted);
   for(UIView *view in @[_clock, _date, _spark, _sparkCaption, _status]) { [self.view addSubview:view]; }
 
-  NSArray *items = @[@[@"home", @"rooms", @"Estances"], @[@"overview", @"overview", @"Resum de casa"],
-                     @[@"thermometer", @"climate", @"Temperatura i humitat"], @[@"shield", @"security", @"Seguretat"]];
+  NSArray *items = @[@[@"home", @"rooms", @"Estances"], @[@"thermometer", @"climate", @"Temperatura i humitat"],
+                     @[@"shield", @"security", @"Seguretat"], @[@"overview", @"overview", @"Resum de casa"]];
   for(NSArray *item in items) {
     GRNavButton *button = [[GRNavButton alloc] initWithIcon:item[0] destination:item[1] accessibility:item[2]];
     [button addTarget:self action:@selector(navTapped:) forControlEvents:UIControlEventTouchUpInside];
@@ -186,6 +190,14 @@ static UIView *GRDot(BOOL lit) {
   _viewFlow = [GRFlowView new];
   [_scroll addSubview:_viewFlow];
   [self.view addSubview:_scroll];
+
+  // Swipe left or right anywhere to move between the pages, in the order of the navigation buttons.
+  for(NSNumber *direction in @[@(UISwipeGestureRecognizerDirectionLeft), @(UISwipeGestureRecognizerDirectionRight)]) {
+    UISwipeGestureRecognizer *swipe = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(swiped:)];
+    swipe.direction = direction.unsignedIntegerValue;
+    swipe.delegate = self;
+    [self.view addGestureRecognizer:swipe];
+  }
 
   [self buildModalLayer];
   _toastView = [UIView new];
@@ -277,16 +289,20 @@ static UIView *GRDot(BOOL lit) {
   if(landscape) {
     CGFloat leftWidth = MIN(470, floor(size.width * .46));
     CGFloat rightWidth = size.width - 2 * side - leftWidth - 66;
-    _spark.frame = CGRectMake(side + 2, statsBottom + 34, leftWidth - 2, 90);
+    _spark.frame = CGRectMake(side + 2, statsBottom + 30, leftWidth - 2, 72);
     _sparkCaption.frame = CGRectMake(side + 2, CGRectGetMaxY(_spark.frame) + 6, leftWidth, 16);
+    _humiditySpark.frame = CGRectMake(side + 2, CGRectGetMaxY(_sparkCaption.frame) + 18, leftWidth - 2, 72);
+    _humidityCaption.frame = CGRectMake(side + 2, CGRectGetMaxY(_humiditySpark.frame) + 6, leftWidth, 16);
     _status.textAlignment = NSTextAlignmentLeft;
     _status.frame = CGRectMake(side + 2, navY - 18 - 16, leftWidth, 16);
     _scroll.frame = CGRectMake(size.width - side - rightWidth, top, rightWidth, size.height - top);
     _scroll.contentInset = UIEdgeInsetsMake(clockTop - top + 4, 0, 32, 0);
   } else {
     CGFloat sparkWidth = MIN(250, size.width - 2 * side - 330);
-    _spark.frame = CGRectMake(size.width - side - sparkWidth, clockTop + 16, sparkWidth, 76);
-    _sparkCaption.frame = CGRectMake(size.width - side - sparkWidth, CGRectGetMaxY(_spark.frame) + 6, sparkWidth, 16);
+    _spark.frame = CGRectMake(size.width - side - sparkWidth, clockTop - 4, sparkWidth, 40);
+    _sparkCaption.frame = CGRectMake(size.width - side - sparkWidth, CGRectGetMaxY(_spark.frame) + 3, sparkWidth, 15);
+    _humiditySpark.frame = CGRectMake(size.width - side - sparkWidth, CGRectGetMaxY(_sparkCaption.frame) + 10, sparkWidth, 40);
+    _humidityCaption.frame = CGRectMake(size.width - side - sparkWidth, CGRectGetMaxY(_humiditySpark.frame) + 3, sparkWidth, 15);
     _status.textAlignment = NSTextAlignmentCenter;
     _status.frame = CGRectMake(side, navY - 14 - 16, size.width - 2 * side, 16);
     CGFloat scrollTop = statsBottom + 14;
@@ -296,7 +312,7 @@ static UIView *GRDot(BOOL lit) {
 
   // The climate page takes the whole screen above the navigation: the clock column steps aside.
   BOOL full = [_currentView isEqualToString:@"climate"] || [_currentView isEqualToString:@"security"];
-  NSMutableArray *column = [@[_clock, _date, _spark, _sparkCaption] mutableCopy];
+  NSMutableArray *column = [@[_clock, _date, _spark, _sparkCaption, _humiditySpark, _humidityCaption] mutableCopy];
   [column addObjectsFromArray:_statLabels]; [column addObjectsFromArray:_statValues];
   for(UIView *view in column) { view.alpha = full ? 0 : 1; }
   BOOL fixed = [_currentView isEqualToString:@"climate"];
@@ -340,8 +356,8 @@ static UIView *GRDot(BOOL lit) {
   GRTheme *t = [GRTheme current];
   self.view.backgroundColor = t.background;
   _clock.textColor = t.highlight; _date.textColor = t.muted;
-  _sparkCaption.textColor = t.muted; _status.textColor = t.muted;
-  [_spark setNeedsDisplay];
+  _sparkCaption.textColor = t.muted; _humidityCaption.textColor = t.muted; _status.textColor = t.muted;
+  [_spark setNeedsDisplay]; [_humiditySpark setNeedsDisplay];
   for(GRNavButton *button in _navButtons) { [button applyTheme]; }
   [_settingsButton applyTheme];
   _backdrop.backgroundColor = t.backdrop;
@@ -487,22 +503,28 @@ static UIView *GRDot(BOOL lit) {
              font:GRFont(24, UIFontWeightLight) color:t.text];
   }
 
-  NSArray *values = nil; NSString *name = nil;
-  for(NSDictionary *sensor in [GRLogic entities:entities inCategory:@"climate"]) {
-    if(![GRStr(GRDict(sensor[@"attributes"])[@"device_class"]) isEqualToString:@"temperature"]) { continue; }
-    NSArray *points = GRArray(self.model.historySeries[sensor[@"entity_id"]]);
-    if(points.count < 2) { continue; }
-    NSMutableArray *numbers = [NSMutableArray array];
-    for(NSDictionary *point in points) { if(GRNum(GRDict(point)[@"value"])) { [numbers addObject:point[@"value"]]; } }
-    if(numbers.count >= 2) { values = numbers; name = GRStr(sensor[@"name"]); break; }
-  }
+  // Trend of the first temperature sensor and the first humidity sensor that have history.
   NSInteger hours = self.model.historyHours;
   NSString *period = hours == 6 ? @"6 h" : (hours == 168 ? @"7 dies" : (hours == 720 ? @"mes" : @"24 h"));
-  _spark.values = values ?: @[];
-  _spark.hidden = !values;
-  _spark.accessibilityLabel = values ? [NSString stringWithFormat:@"Evolució de la temperatura de %@", name ?: @"casa"] : nil;
-  _sparkCaption.text = values ? [NSString stringWithFormat:@"%@ · últim%@ %@", name ?: @"Temperatura", hours == 720 ? @"" : @"es", period]
-                              : (self.model.historyLoading ? @"Carregant l’historial…" : @"");
+  NSArray *kinds = @[@[@"temperature", _spark, _sparkCaption, @"Temperatura", @"de la temperatura"],
+                     @[@"humidity", _humiditySpark, _humidityCaption, @"Humitat", @"de la humitat"]];
+  for(NSArray *kind in kinds) {
+    NSArray *values = nil; NSString *name = nil;
+    for(NSDictionary *sensor in [GRLogic entities:entities inCategory:@"climate"]) {
+      if(![GRStr(GRDict(sensor[@"attributes"])[@"device_class"]) isEqualToString:kind[0]]) { continue; }
+      NSArray *points = GRArray(self.model.historySeries[sensor[@"entity_id"]]);
+      NSMutableArray *numbers = [NSMutableArray array];
+      for(id point in points ?: @[]) { if(GRNum(GRDict(point)[@"value"])) { [numbers addObject:point[@"value"]]; } }
+      if(numbers.count >= 2) { values = numbers; name = GRStr(sensor[@"name"]); break; }
+    }
+    GRSparklineView *spark = kind[1];
+    UILabel *caption = kind[2];
+    spark.values = values ?: @[];
+    spark.hidden = !values;
+    spark.accessibilityLabel = values ? [NSString stringWithFormat:@"Evolució %@ de %@", kind[4], name ?: @"casa"] : nil;
+    caption.text = values ? [NSString stringWithFormat:@"%@ · últim%@ %@", name ?: kind[3], hours == 720 ? @"" : @"es", period]
+                          : (self.model.historyLoading && spark == _spark ? @"Carregant l’historial…" : @"");
+  }
   [self renderStatus];
   [self.view setNeedsLayout];
 }
@@ -587,6 +609,46 @@ static UIView *GRDot(BOOL lit) {
   _currentView = destination;
   [self renderView];
   [_scroll setContentOffset:CGPointMake(0, -_scroll.contentInset.top) animated:NO];
+}
+
+#pragma mark Swipe between pages
+
+static NSArray<NSString *> *GRPages(void) { return @[@"rooms", @"climate", @"security", @"overview"]; }
+
+- (void)swiped:(UISwipeGestureRecognizer *)swipe {
+  NSArray *pages = GRPages();
+  NSInteger index = (NSInteger)[pages indexOfObject:_currentView];
+  if(index == NSNotFound) { return; }
+  BOOL forward = swipe.direction == UISwipeGestureRecognizerDirectionLeft;
+  NSInteger next = index + (forward ? 1 : -1);
+  if(next < 0 || next >= (NSInteger)pages.count) { return; }
+  // The new page slides in from the side the finger came from; the clock column fades in or out.
+  CATransition *transition = [CATransition animation];
+  transition.type = kCATransitionPush;
+  transition.subtype = forward ? kCATransitionFromRight : kCATransitionFromLeft;
+  transition.duration = .28;
+  transition.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+  [_scroll.layer addAnimation:transition forKey:@"page"];
+  [self navigate:pages[next]];
+  [UIView animateWithDuration:.28 animations:^{ [self.view layoutIfNeeded]; }];
+  UIAccessibilityPostNotification(UIAccessibilityScreenChangedNotification, nil);
+}
+
+// No page swipe over controls that use horizontal drags (sliders, switches, the climate chart, scrolling strips),
+// nor while a drawer or the enlarged camera is open.
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
+  if(![gesture isKindOfClass:[UISwipeGestureRecognizer class]]) { return YES; }
+  if(_modal || _cameraZoom || ![GRPages() containsObject:_currentView]) { return NO; }
+  for(UIView *view = touch.view; view && view != self.view; view = view.superview) {
+    if([view isKindOfClass:[UISlider class]] || [view isKindOfClass:[UISwitch class]] || [view isKindOfClass:[GRClimateChartView class]]) { return NO; }
+    if([view isKindOfClass:[UIScrollView class]] && ((UIScrollView *)view).contentSize.width > view.bounds.size.width + 1) { return NO; }
+  }
+  return YES;
+}
+
+// The page's vertical scroll must not swallow a horizontal swipe.
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
+  return [gesture isKindOfClass:[UISwipeGestureRecognizer class]];
 }
 
 - (void)renderView {

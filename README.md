@@ -1,10 +1,12 @@
 # Glass Rooms
 
-## Revisió 1.1.10
+## Revisió 1.1.11
 
 **Migració des de 1.0.x:** a les opcions privades de Glass Rooms, elimina `panel_password` i configura `panel_pin` amb un PIN nou de 6 a 8 dígits. Desa les opcions i reinicia l'aplicació. La contrasenya antiga no es converteix automàticament en PIN; si falta `panel_pin`, el servidor no arrenca. L'accés al panell es fa amb el teclat numèric de la pàgina. El PIN d'alarma, si n'hi ha, continua sent independent.
 
-**Novetat 1.1.10:** l'app per a iPad té un panell de **Seguretat** a pantalla completa. Hi surten:
+**Novetat 1.1.11:** a l'app per a iPad, la portada mostra la corba de la temperatura i, a sota, la de la humitat. L'ordre de les pàgines és Estances, Clima, Seguretat i Resum, i es pot passar d'una a l'altra lliscant el dit cap a l'esquerra o cap a la dreta.
+
+**1.1.10:** l'app per a iPad té un panell de **Seguretat** a pantalla completa. Hi surten:
 
 - l'alarma, amb els botons d'armar i desarmar;
 - la càmera, amb una imatge nova cada 2,5 s i la detecció de moviment i de persones;

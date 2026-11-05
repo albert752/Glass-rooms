@@ -119,3 +119,14 @@ No comprovat: el comportament amb el llum i el sensor d'humitat reals de Home As
 | Previsualització Mac Catalyst a 1024×768 i 768×1024 amb un Home Assistant simulat amb les entitats de seguretat de casa | Alarma amb botons d'armar, càmera que es refresca, detecció, portes i finestres, sirena, persones i bateries, de dia i de nit |
 
 No comprovat: Alarmo, la càmera, la sirena ni els sensors reals; les ordres d'armar, desarmar i aturar amb Home Assistant.
+
+## Revisió 1.1.11 — humitat a la portada i pàgines lliscants
+
+5 de novembre de 2026.
+
+| Comprovació executada | Resultat |
+|---|---|
+| `python3 -m unittest discover -s tests` i `ios/scripts/test.sh` | Superades |
+| Previsualització Mac Catalyst a 1024×768 i 768×1024 | Corbes de temperatura i humitat a la portada; navegació Estances, Clima, Seguretat, Resum; el lliscament cap a l'esquerra des d'Estances obre Clima |
+
+No comprovat: el lliscament amb el dit a l'iPad real; a la previsualització s'ha cridat directament el mètode del gest.

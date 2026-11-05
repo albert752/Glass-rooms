@@ -195,9 +195,10 @@ static double GRNiceStep(double raw) {
   [area addLineToPoint:CGPointMake(size.width, size.height)];
   [area addLineToPoint:CGPointMake(0, size.height)];
   [area closePath];
-  [[t.accent colorWithAlphaComponent:t.night ? .09 : .14] setFill]; [area fill];
+  UIColor *color = self.humidity ? t.humidityLine : t.accent;
+  [[color colorWithAlphaComponent:t.night ? .09 : .14] setFill]; [area fill];
   line.lineWidth = 2; line.lineCapStyle = kCGLineCapRound; line.lineJoinStyle = kCGLineJoinRound;
-  [t.accent setStroke]; [line stroke];
+  [color setStroke]; [line stroke];
 }
 
 @end

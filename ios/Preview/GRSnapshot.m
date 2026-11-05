@@ -75,6 +75,12 @@ __attribute__((constructor)) static void GRInstallSnapshots(void) {
     add(@"security-night-end", ^{ GRScrollToEnd(window); });
     add(@"room-drawer-night", ^{ [panel navigate:@"rooms"]; [panel openRoom:@"menjador"]; });
     add(@"lights-drawer-night", ^{ [panel closeModal]; [panel navigate:@"lights"]; });
+    add(@"swipe-to-climate", ^{
+      [panel closeModal]; [panel navigate:@"rooms"];
+      UISwipeGestureRecognizer *swipe = [UISwipeGestureRecognizer new]; swipe.direction = UISwipeGestureRecognizerDirectionLeft;
+      [panel performSelector:@selector(swiped:) withObject:swipe];
+    });
+    add(@"", ^{ [panel navigate:@"rooms"]; });
     add(@"after-switch", ^{
       [panel closeModal];
       UISwitch *toggle = GRFindSwitch(window, @"cuina");
