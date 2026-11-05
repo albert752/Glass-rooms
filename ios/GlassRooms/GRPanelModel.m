@@ -230,7 +230,7 @@ static const NSTimeInterval GRPollInterval = 30;
     [ids addObject:light[@"entity_id"]];
   }
   self.busy = YES;
-  [self.delegate panelModel:self showToast:[NSString stringWithFormat:@"Enviant %lu%@ a %@…", (unsigned long)lights.count, lights.count == 1 ? @" ordre" : @" ordres", place]];
+  // No notice while sending or on success: the switch and the refreshed state already show the result.
   NSUInteger generation = _clientGeneration;
   [self.client POST:@"/api/lights" body:@{@"entity_ids": ids, @"action": action} timeout:60 completion:^(NSString *error, id data, NSInteger status) {
     if(generation != self->_clientGeneration) { return; }
@@ -241,7 +241,7 @@ static const NSTimeInterval GRPollInterval = 30;
     else if(![data[@"ok"] isEqual:@YES]) {
       [self.delegate panelModel:self showToast:[NSString stringWithFormat:@"Ordres enviades: %@. Sense enviar: %@. %@", succeeded ?: @0, failed ?: @0, GRStr(data[@"error"]) ?: @""]];
     } else if(skipped) {
-      [self.delegate panelModel:self showToast:[NSString stringWithFormat:@"Ordres enviades: %@. Llums omesos: %lu (no disponibles o sense verificació).", succeeded ?: @0, (unsigned long)skipped]];
+      [self.delegate panelModel:self showToast:[NSString stringWithFormat:@"Llums omesos: %lu (no disponibles o sense verificació).", (unsigned long)skipped]];
     } else { [self.delegate panelModel:self showToast:nil]; }
     [self refresh:YES];
     if(succeeded.integerValue > 0) { [self scheduleActionRefreshes:ids action:action]; }

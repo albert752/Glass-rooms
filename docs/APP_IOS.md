@@ -13,6 +13,7 @@ Està pensat per a un iPad fix a la paret i llegit a distància.
   - la corba de temperatura del primer sensor amb historial, amb el període triat a Clima (24 h per defecte).
 - **Navegació inferior:** Estances, Resum, Clima, Seguretat, tema (sol o lluna) i Ajustos.
 - **Estances:** una fila per estança, amb un punt ambre si té llums encesos, la temperatura i un interruptor de llums. Tocar el nom obre el calaix de l'estança. Sota la llista hi ha «Encén tot» i «Apaga tot».
+- **Avisos:** les ordres de llums no mostren cap missatge en enviar-se ni quan funcionen; l'interruptor i l'estat actualitzat ja ho indiquen. Només apareix un avís si l'ordre falla o si s'ometen llums (des de 1.1.7).
 - **Calaix lateral:** surt per la dreta. Cada dispositiu amb ordres d'encendre i apagar té un interruptor. La brillantor, la velocitat i el volum s'envien en deixar anar el control lliscant, sense botó «Aplica».
 - **Temes:** de nit, negre pur amb text ambre; de dia, paper càlid amb ambre torrat. El mode automàtic canvia a les 7 i a les 20 h.
 - **Orientació:** en horitzontal, el rellotge queda a l'esquerra i el contingut a la dreta. En vertical, el rellotge va a dalt i la llista a sota.
