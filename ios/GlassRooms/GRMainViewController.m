@@ -87,6 +87,9 @@ static UIView *GRDot(BOOL lit) {
   UIScrollView *_scroll;
   GRFlowView *_viewFlow;
   NSString *_currentView;
+  // Climate page: chosen sensor and the inspected point (-1 = latest).
+  NSString *_climateSensor;
+  NSInteger _climateIndex;
   CGFloat _renderedWidth;
   UIView *_toastView;
   UILabel *_toastLabel;
@@ -112,6 +115,7 @@ static UIView *GRDot(BOOL lit) {
     // The clock column always shows the temperature trend, so history is loaded on every view.
     _model.climateVisible = YES;
     _currentView = @"rooms";
+    _climateIndex = -1;
     _navButtons = [NSMutableArray array];
   }
   return self;
@@ -282,6 +286,21 @@ static UIView *GRDot(BOOL lit) {
     _scroll.frame = CGRectMake(side, scrollTop, size.width - 2 * side, CGRectGetMinY(_status.frame) - 6 - scrollTop);
     _scroll.contentInset = UIEdgeInsetsMake(14, 0, 14, 0);
   }
+
+  // The climate page takes the whole screen above the navigation: the clock column steps aside.
+  BOOL full = [_currentView isEqualToString:@"climate"];
+  NSMutableArray *column = [@[_clock, _date, _spark, _sparkCaption] mutableCopy];
+  [column addObjectsFromArray:_statLabels]; [column addObjectsFromArray:_statValues];
+  for(UIView *view in column) { view.alpha = full ? 0 : 1; }
+  _scroll.scrollEnabled = !full;
+  if(full) {
+    _scroll.frame = CGRectMake(side, top + 26, size.width - 2 * side, navY - 24 - (top + 26));
+    _scroll.contentInset = UIEdgeInsetsZero;
+    _scroll.contentOffset = CGPointZero;
+    _status.textAlignment = NSTextAlignmentRight;
+    _status.alpha = landscape ? 1 : 0;
+    _status.frame = CGRectMake(navX, navY + 20, size.width - side - navX, 16);
+  } else { _status.alpha = 1; }
 
   if(fabs(_renderedWidth - size.width) > .5) { _renderedWidth = size.width; [self renderView]; [self rebuildModal]; }
   else { [self layoutViewFlow]; }
@@ -712,68 +731,180 @@ static UIView *GRDot(BOOL lit) {
   [self openCategory:category title:titles[category] ?: @"Dispositius"];
 }
 
+// Full-screen climate page: sensor chips, a large reading of the inspected point and the history chart.
 - (void)renderClimate {
   GRTheme *t = [GRTheme current];
-  NSArray *sensors = [GRLogic entities:self.model.entities inCategory:@"climate"];
-  NSString *heading = self.model.connected ? [NSString stringWithFormat:@"CLIMA · %lu %@", (unsigned long)sensors.count, sensors.count == 1 ? @"SENSOR" : @"SENSORS"] : @"CLIMA";
-  [_viewFlow addView:[self sectionLabel:heading] top:0];
   __weak GRMainViewController *weakSelf = self;
-  if(!sensors.count) {
-    [_viewFlow addView:GRWrappingLabel(self.model.connected ? @"Encara no hi ha lectures ambientals." : @"Esperant dades de Home Assistant.", GRFont(24, UIFontWeightLight), t.text, 0) top:22];
-    [_viewFlow addView:[self note:self.model.connected ? @"Afegeix els IDs dels sensors de temperatura i humitat a entity_ids. Home Assistant ha de publicar device_class: temperature o humidity. Assigna cada sensor a una habitació amb room_assignments." : @"Quan es recuperi la connexió, apareixeran els sensors ambientals configurats."] top:10];
-    return;
-  }
-  GRWrapView *periods = [GRWrapView new];
-  periods.horizontalSpacing = 8; periods.verticalSpacing = 8;
+  NSArray *sensors = [GRLogic entities:self.model.entities inCategory:@"climate"];
+
+  UILabel *title = GRLabel(nil, GRFont(40, UIFontWeightThin), t.highlight);
+  title.attributedText = GRKerned(@"Clima", GRFont(40, UIFontWeightThin), t.highlight, -1);
+  title.accessibilityTraits = UIAccessibilityTraitHeader;
+  NSMutableArray *periods = [NSMutableArray array];
   for(NSArray *period in @[@[@6, @"6 h"], @[@24, @"24 h"], @[@168, @"7 dies"], @[@720, @"1 mes"]]) {
     NSInteger hours = [period[0] integerValue];
-    GRButton *button = [GRButton buttonWithTitle:period[1] style:GRButtonStylePeriod handler:^(GRButton *b) { [weakSelf.model changeClimatePeriod:hours]; }];
+    GRButton *button = [GRButton buttonWithTitle:period[1] style:GRButtonStylePeriod handler:^(GRButton *b) {
+      GRMainViewController *strongSelf = weakSelf;
+      if(strongSelf) { strongSelf->_climateIndex = -1; }
+      [weakSelf.model changeClimatePeriod:hours];
+    }];
     button.selectedLook = self.model.historyHours == hours;
     button.accessibilityTraits = UIAccessibilityTraitButton | (button.selectedLook ? UIAccessibilityTraitSelected : 0);
-    [periods addSubview:button];
+    [periods addObject:button];
   }
-  [_viewFlow addView:periods top:14];
-
-  NSMutableArray *groups = [[GRLogic rooms] mutableCopy];
-  [groups addObject:@{@"name": @"Sense habitació assignada"}];
-  for(NSDictionary *group in groups) {
-    NSArray *matches = [GRLogic entities:sensors inRoom:group[@"id"]];
-    if(!matches.count) { continue; }
-    [_viewFlow addView:[self sectionLabel:[GRStr(group[@"name"]) uppercaseString]] top:30];
-    for(NSDictionary *sensor in matches) {
-      NSDictionary *attributes = GRDict(sensor[@"attributes"]) ?: @{};
-      BOOL humidity = [attributes[@"device_class"] isEqual:@"humidity"];
-      NSNumber *number = [GRLogic numericState:sensor connected:self.model.connected];
-      NSString *unit = GRStr(attributes[@"unit_of_measurement"]);
-      NSString *reading = !number ? @"—" : (humidity ? [NSString stringWithFormat:@"%ld%%", GRRound(number.doubleValue)]
-                                                     : [NSString stringWithFormat:@"%@ %@", [GRLogic shortNumber:number.doubleValue], unit ?: @""]);
-      UILabel *name = GRLabel(GRStr(sensor[@"name"]) ?: sensor[@"entity_id"], GRFont(18, UIFontWeightLight), t.text);
-      UILabel *kind = GRLabel(humidity ? @"Humitat" : @"Temperatura", GRFont(13, UIFontWeightRegular), t.muted);
-      UILabel *value = GRLabel(reading, GRDigits(34, UIFontWeightThin), t.highlight);
-      value.textAlignment = NSTextAlignmentRight;
-      value.accessibilityLabel = [NSString stringWithFormat:@"%@: %@", name.text, reading];
-      GRBlockView *head = [GRBlockView new];
-      for(UIView *view in @[name, kind, value]) { [head addSubview:view]; }
-      head.measure = ^CGFloat(CGFloat width) { return 50; };
-      head.layout = ^(UIView *view) {
-        CGFloat w = view.bounds.size.width;
-        value.frame = CGRectMake(w - 150, 4, 150, 42);
-        name.frame = CGRectMake(0, 4, w - 160, 24);
-        kind.frame = CGRectMake(0, 29, w - 160, 18);
-      };
-      [_viewFlow addView:head top:12];
-      if(![sensor[@"status"] isEqual:@"ok"] || !self.model.connected) {
-        [_viewFlow addView:GRLabel([GRLogic stateTextForEntity:sensor connected:self.model.connected demo:self.model.demo], GRFont(13, UIFontWeightRegular), t.issue) top:2];
-      } else if(!number) {
-        [_viewFlow addView:GRLabel(@"Lectura no vàlida", GRFont(13, UIFontWeightRegular), t.issue) top:2];
-      }
-      NSArray *points = GRArray(self.model.historySeries[sensor[@"entity_id"]]) ?: @[];
-      NSString *message = self.model.historyLoading ? @"Carregant l’historial…" : (self.model.historyError ?: @"Encara no hi ha historial disponible.");
-      GRClimateChartView *chart = [[GRClimateChartView alloc] initWithPoints:points unit:unit ?: @"" humidity:humidity name:name.text message:message];
-      [_viewFlow addView:chart top:10];
-      [_viewFlow addView:[GRRuleView ruleWithColor:t.line] top:14];
+  GRBlockView *header = [GRBlockView new];
+  [header addSubview:title];
+  for(UIView *button in periods) { [header addSubview:button]; }
+  header.measure = ^CGFloat(CGFloat width) { return 52; };
+  header.layout = ^(UIView *view) {
+    CGFloat x = view.bounds.size.width;
+    for(UIView *button in [periods reverseObjectEnumerator]) {
+      CGFloat w = MAX(64, ceil([button sizeThatFits:CGSizeMake(200, 44)].width));
+      x -= w; button.frame = CGRectMake(x, 4, w, 44); x -= 8;
     }
+    title.frame = CGRectMake(0, 0, x - 12, 52);
+  };
+  [_viewFlow addView:header top:0];
+
+  if(!sensors.count) {
+    [_viewFlow addView:GRWrappingLabel(self.model.connected ? @"Encara no hi ha lectures ambientals." : @"Esperant dades de Home Assistant.", GRFont(28, UIFontWeightLight), t.text, 0) top:40];
+    [_viewFlow addView:[self note:self.model.connected ? @"Afegeix els IDs dels sensors de temperatura i humitat a entity_ids. Home Assistant ha de publicar device_class: temperature o humidity. Assigna cada sensor a una habitació amb room_assignments." : @"Quan es recuperi la connexió, apareixeran els sensors ambientals configurats."] top:12];
+    return;
   }
+
+  // Sensors in room order; keep the chosen one, else the first temperature sensor.
+  NSMutableArray *ordered = [NSMutableArray array];
+  for(NSDictionary *room in [GRLogic rooms]) { [ordered addObjectsFromArray:[GRLogic entities:sensors inRoom:room[@"id"]]]; }
+  [ordered addObjectsFromArray:[GRLogic entities:sensors inRoom:nil]];
+  NSDictionary *chosen = nil;
+  for(NSDictionary *sensor in ordered) { if([sensor[@"entity_id"] isEqual:_climateSensor]) { chosen = sensor; } }
+  for(NSDictionary *sensor in ordered) {
+    if(!chosen && [GRDict(sensor[@"attributes"])[@"device_class"] isEqual:@"temperature"]) { chosen = sensor; }
+  }
+  chosen = chosen ?: ordered.firstObject;
+  _climateSensor = chosen[@"entity_id"];
+
+  NSString *(^format)(NSDictionary *, NSNumber *) = ^NSString *(NSDictionary *sensor, NSNumber *value) {
+    if(!value) { return @"—"; }
+    BOOL humidity = [GRDict(sensor[@"attributes"])[@"device_class"] isEqual:@"humidity"];
+    NSString *unit = GRStr(GRDict(sensor[@"attributes"])[@"unit_of_measurement"]) ?: @"";
+    return humidity ? [NSString stringWithFormat:@"%ld%%", GRRound(value.doubleValue)] : [NSString stringWithFormat:@"%@ %@", [GRLogic shortNumber:value.doubleValue], unit];
+  };
+
+  UIScrollView *strip = [UIScrollView new];
+  strip.showsHorizontalScrollIndicator = NO; strip.alwaysBounceHorizontal = YES; strip.delaysContentTouches = NO;
+  NSMutableArray *chips = [NSMutableArray array];
+  for(NSDictionary *sensor in ordered) {
+    BOOL selected = sensor == chosen;
+    BOOL humidity = [GRDict(sensor[@"attributes"])[@"device_class"] isEqual:@"humidity"];
+    NSString *roomName = GRStr([GRLogic roomWithId:GRStr(sensor[@"room"]) ?: @""][@"name"]) ?: @"Sense estança";
+    NSString *reading = format(sensor, [GRLogic numericState:sensor connected:self.model.connected]);
+    GRRowControl *chip = [GRRowControl new];
+    chip.layer.cornerRadius = 16; chip.layer.borderWidth = selected ? 1.5 : 1;
+    chip.layer.borderColor = (selected ? t.accent : t.edge).CGColor;
+    chip.clipsToBounds = YES;
+    UILabel *room = GRLabel(nil, GRFont(11, UIFontWeightMedium), selected ? t.accent : t.muted);
+    room.attributedText = GRKerned(roomName.uppercaseString, room.font, room.textColor, 1.5);
+    UILabel *line = GRLabel([NSString stringWithFormat:@"%@ · %@", humidity ? @"Humitat" : @"Temperatura", reading], GRFont(17, UIFontWeightLight), selected ? t.highlight : t.text);
+    for(UILabel *label in @[room, line]) { label.userInteractionEnabled = NO; [chip addSubview:label]; }
+    CGFloat width = MAX(150, MAX(ceil([room sizeThatFits:CGSizeZero].width), ceil([line sizeThatFits:CGSizeZero].width)) + 36);
+    chip.frame = CGRectMake(0, 0, width, 64);
+    room.frame = CGRectMake(18, 13, width - 36, 14);
+    line.frame = CGRectMake(18, 30, width - 36, 22);
+    chip.accessibilityIdentifier = sensor[@"entity_id"];
+    chip.isAccessibilityElement = YES;
+    chip.accessibilityLabel = [NSString stringWithFormat:@"%@, %@, %@", GRStr(sensor[@"name"]) ?: roomName, humidity ? @"humitat" : @"temperatura", reading];
+    chip.accessibilityTraits = UIAccessibilityTraitButton | (selected ? UIAccessibilityTraitSelected : 0);
+    [chip addTarget:self action:@selector(climateSensorTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [strip addSubview:chip]; [chips addObject:chip];
+  }
+  GRBlockView *stripRow = [GRBlockView new];
+  [stripRow addSubview:strip];
+  stripRow.measure = ^CGFloat(CGFloat width) { return 64; };
+  stripRow.layout = ^(UIView *view) {
+    strip.frame = view.bounds;
+    CGFloat x = 0;
+    for(UIView *chip in chips) { chip.frame = CGRectMake(x, 0, chip.bounds.size.width, 64); x += chip.bounds.size.width + 10; }
+    strip.contentSize = CGSizeMake(MAX(0, x - 10), 64);
+  };
+  [_viewFlow addView:stripRow top:18];
+
+  // Reading of the inspected point, with the period's minimum, maximum and mean.
+  NSArray *raw = GRArray(self.model.historySeries[_climateSensor]) ?: @[];
+  NSMutableArray *points = [NSMutableArray array];
+  for(id point in raw) { if(GRDict(point) && GRNum(point[@"value"]) && GRParseISODate(GRStr(point[@"time"]))) { [points addObject:point]; } }
+  BOOL humidity = [GRDict(chosen[@"attributes"])[@"device_class"] isEqual:@"humidity"];
+  UILabel *value = GRLabel(nil, GRDigits(64, UIFontWeightThin), t.highlight);
+  value.adjustsFontSizeToFitWidth = YES; value.minimumScaleFactor = .6;
+  UILabel *when = GRLabel(nil, GRFont(16, UIFontWeightRegular), t.muted);
+  NSMutableArray *statViews = [NSMutableArray array];
+  double minimum = 0, maximum = 0, total = 0;
+  for(NSUInteger i = 0; i < points.count; i++) {
+    double v = [points[i][@"value"] doubleValue];
+    minimum = i ? MIN(minimum, v) : v; maximum = i ? MAX(maximum, v) : v; total += v;
+  }
+  NSArray *stats = @[@[@"MÍNIM", points.count ? @(minimum) : [NSNull null]], @[@"MÀXIM", points.count ? @(maximum) : [NSNull null]],
+                     @[@"MITJANA", points.count ? @(total / points.count) : [NSNull null]]];
+  for(NSArray *stat in stats) {
+    UILabel *label = GRLabel(nil, GRFont(12, UIFontWeightMedium), t.muted);
+    label.attributedText = GRKerned(stat[0], label.font, t.muted, 1.2);
+    UILabel *number = GRLabel(format(chosen, [stat[1] isKindOfClass:[NSNumber class]] ? stat[1] : nil), GRDigits(26, UIFontWeightLight), t.text);
+    number.accessibilityLabel = [NSString stringWithFormat:@"%@: %@", [stat[0] lowercaseString], number.text];
+    label.isAccessibilityElement = NO;
+    [statViews addObject:@[label, number]];
+  }
+  GRBlockView *readout = [GRBlockView new];
+  [readout addSubview:value]; [readout addSubview:when];
+  for(NSArray *pair in statViews) { [readout addSubview:pair[0]]; [readout addSubview:pair[1]]; }
+  readout.measure = ^CGFloat(CGFloat width) { return 96; };
+  readout.layout = ^(UIView *view) {
+    CGFloat w = view.bounds.size.width, x = w;
+    for(NSArray *pair in [statViews reverseObjectEnumerator]) {
+      CGFloat cw = MAX(90, ceil([pair[1] sizeThatFits:CGSizeZero].width));
+      x -= cw;
+      [pair[0] setFrame:CGRectMake(x, 26, cw, 16)];
+      [pair[1] setFrame:CGRectMake(x, 44, cw, 32)];
+      x -= 28;
+    }
+    value.frame = CGRectMake(0, 0, x - 20, 72);
+    when.frame = CGRectMake(2, 72, x - 20, 22);
+  };
+  [_viewFlow addView:readout top:20];
+
+  NSString *message = self.model.historyLoading ? @"Carregant l’historial…" : (self.model.historyError ?: @"Encara no hi ha historial disponible.");
+  GRClimateChartView *chart = [[GRClimateChartView alloc] initWithPoints:points humidity:humidity message:message];
+  NSDictionary *sensor = chosen;
+  BOOL connected = self.model.connected;
+  void (^show)(NSInteger) = ^(NSInteger index) {
+    GRMainViewController *strongSelf = weakSelf;
+    if(!points.count) {
+      value.text = format(sensor, [GRLogic numericState:sensor connected:connected]);
+      when.text = connected ? @"Lectura actual" : @"Pendent de connexió";
+      return;
+    }
+    if(strongSelf) { strongSelf->_climateIndex = index == (NSInteger)points.count - 1 ? -1 : index; }
+    value.text = format(sensor, points[index][@"value"]);
+    NSString *time = [GRLogic climateTime:points[index][@"time"]];
+    when.text = index == (NSInteger)points.count - 1 ? [@"Últim registre · " stringByAppendingString:time] : time;
+  };
+  chart.onSelect = show;
+  if(points.count) { [chart selectIndex:_climateIndex >= 0 && _climateIndex < (NSInteger)points.count ? _climateIndex : (NSInteger)points.count - 1]; }
+  else { show(0); }
+  GRBlockView *chartRow = [GRBlockView new];
+  [chartRow addSubview:chart];
+  chartRow.measure = ^CGFloat(CGFloat width) {
+    GRMainViewController *strongSelf = weakSelf;
+    // Whatever height is left below the header, sensors and reading (52 + 18 + 64 + 20 + 96 + 16).
+    return MAX(240, (strongSelf ? strongSelf->_scroll.bounds.size.height : 400) - 266);
+  };
+  chartRow.layout = ^(UIView *view) { chart.frame = view.bounds; [chart setNeedsDisplay]; };
+  [_viewFlow addView:chartRow top:16];
+}
+
+- (void)climateSensorTapped:(UIControl *)chip {
+  _climateSensor = chip.accessibilityIdentifier;
+  _climateIndex = -1;
+  [self renderView];
 }
 
 #pragma mark - Side drawer

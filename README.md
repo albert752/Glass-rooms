@@ -1,10 +1,12 @@
 # Glass Rooms
 
-## Revisió 1.1.7
+## Revisió 1.1.8
 
 **Migració des de 1.0.x:** a les opcions privades de Glass Rooms, elimina `panel_password` i configura `panel_pin` amb un PIN nou de 6 a 8 dígits. Desa les opcions i reinicia l'aplicació. La contrasenya antiga no es converteix automàticament en PIN; si falta `panel_pin`, el servidor no arrenca. L'accés al panell es fa amb el teclat numèric de la pàgina. El PIN d'alarma, si n'hi ha, continua sent independent.
 
-**Novetat 1.1.7:** l'app per a iPad ja no mostra cap avís quan envia una ordre de llums; només avisa si falla o si s'ometen llums.
+**Novetat 1.1.8:** a l'app per a iPad, la pàgina de Clima ocupa tota la pantalla. Té una gràfica gran amb eixos que es pot tocar o arrossegar per veure cada punt, una fitxa per sensor, la lectura en gran i el mínim, el màxim i la mitjana del període.
+
+**1.1.7:** l'app per a iPad ja no mostra cap avís quan envia una ordre de llums; només avisa si falla o si s'ometen llums.
 
 **1.1.6:** redisseny complet de l'[app nativa per a iPad amb iOS 9](docs/APP_IOS.md) (`ios/`), pensada per a un iPad fix a la paret. Té un rellotge gran amb temperatura, humitat i alarma i la tendència de les últimes hores. Les estances es mostren en llista, amb un interruptor de llums a cada fila, i hi ha un calaix lateral per a cada estança. Els temes són negre i ambre de nit i paper càlid de dia. El panell web i el servidor no canvien.
 

@@ -84,3 +84,13 @@ No s'ha instal·lat l'app a l'iPad. La compilació Mac Catalyst no emula iOS 9 n
 | `ios/scripts/build.sh` | IPA armv7 + arm64 contra l'SDK 9.3 amb `-Werror` i `-Werror=unguarded-availability` |
 | Previsualització Mac Catalyst a 1024×768 i 768×1024 contra el servidor real amb un Home Assistant simulat | Estances, resum, clima amb historial, calaix d'estança, llums i ajustos, de dia i de nit; l'interruptor de la cuina encén el llum al servidor |
 | Instal·lació a l'iPad mini 1 amb `ideviceinstaller` | Instal·lació completada (`cat.glassrooms.panel` 1.1.6). L'aspecte i la connexió al dispositiu els confirma l'usuari: sense la imatge de disc de desenvolupador no es poden fer captures de l'iPad. |
+
+## Revisió 1.1.8 — Clima a pantalla completa a l'app per a iPad
+
+5 de novembre de 2026. Només canvia l'app nativa (i l'avís d'ordre retirat a 1.1.7).
+
+| Comprovació executada | Resultat |
+|---|---|
+| `python3 -m unittest discover -s tests` (inclou `ios/scripts/test.sh`) | 53 proves superades; 47 comprovacions natives sense errors |
+| `ios/scripts/build.sh` i instal·lació a l'iPad mini 1 amb `ideviceinstaller` | IPA 1.1.8 compilada contra l'SDK 9.3 i instal·lada |
+| Previsualització Mac Catalyst a 1024×768 i 768×1024, de dia i de nit, amb un Home Assistant simulat | Clima a pantalla completa amb fitxes de sensor, lectura, mínim/màxim/mitjana i gràfica amb eixos; la resta de vistes conserven la columna del rellotge |

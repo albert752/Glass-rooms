@@ -2,130 +2,150 @@
 #import "GRLogic.h"
 #import "GRTheme.h"
 #import "GRUtil.h"
-#import "GRViews.h"
 
-// Same geometry as the SVG of the web panel: viewBox 0 0 320 108, drawn 115 points high.
-static const CGFloat GRPlotHeight = 115;
+// Plot margins: room for the value labels on the left and the time labels below.
+static const CGFloat GRPlotLeft = 54, GRPlotRight = 10, GRPlotTop = 14, GRPlotBottom = 32;
 
-@interface GRClimatePlotView : UIView
-@property (nonatomic, copy) NSArray<NSNumber *> *xs, *values;
-@property (nonatomic) double bottom, span;
-@property (nonatomic) NSInteger selectedIndex;
-@property (nonatomic) BOOL humidity;
-@end
-
-@implementation GRClimatePlotView
-
-- (CGFloat)yFor:(double)value { return 96 - (value - self.bottom) * 84 / self.span; }
-
-- (void)drawRect:(CGRect)rect {
-  GRTheme *t = [GRTheme current];
-  // Points use the web SVG's 0-320 x 0-108 box; stretch x 8-312 to the width (6 pt kept for the marker) without thickening the strokes.
-  CGAffineTransform fit = CGAffineTransformScale(CGAffineTransformMakeTranslation(6, 0), (self.bounds.size.width - 12) / 304, self.bounds.size.height / 108);
-  fit = CGAffineTransformTranslate(fit, -8, 0);
-  UIBezierPath *axis = [UIBezierPath bezierPath];
-  [axis moveToPoint:CGPointMake(8, 96)]; [axis addLineToPoint:CGPointMake(312, 96)];
-  [axis applyTransform:fit];
-  axis.lineWidth = 1; [t.line setStroke]; [axis stroke];
-  if(!self.values.count) { return; }
-  UIBezierPath *line = [UIBezierPath bezierPath];
-  for(NSUInteger i = 0; i < self.values.count; i++) {
-    CGPoint point = CGPointMake(self.xs[i].doubleValue, [self yFor:self.values[i].doubleValue]);
-    if(i == 0) { [line moveToPoint:point]; } else { [line addLineToPoint:point]; }
-  }
-  UIColor *color = self.humidity ? t.humidityLine : t.temperatureLine;
-  UIBezierPath *area = [line copy];
-  [area addLineToPoint:CGPointMake(self.xs.lastObject.doubleValue, 96)];
-  [area addLineToPoint:CGPointMake(self.xs.firstObject.doubleValue, 96)];
-  [area closePath];
-  [area applyTransform:fit]; [line applyTransform:fit];
-  [[color colorWithAlphaComponent:.1] setFill]; [area fill];
-  line.lineWidth = 2; line.lineCapStyle = kCGLineCapRound; line.lineJoinStyle = kCGLineJoinRound;
-  [color setStroke];
-  [line stroke];
-  NSInteger index = MAX(0, MIN((NSInteger)self.values.count - 1, self.selectedIndex));
-  CGPoint centre = CGPointApplyAffineTransform(CGPointMake(self.xs[index].doubleValue, [self yFor:self.values[index].doubleValue]), fit);
-  UIBezierPath *circle = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(centre.x - 5, centre.y - 5, 10, 10)];
-  [color setFill]; [circle fill];
-  circle.lineWidth = 2; [t.background setStroke]; [circle stroke];
+static double GRNiceStep(double raw) {
+  double power = pow(10, floor(log10(raw)));
+  double fraction = raw / power;
+  return (fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 2.5 ? 2.5 : fraction <= 5 ? 5 : 10) * power;
 }
-
-@end
 
 @implementation GRClimateChartView {
   NSArray<NSDictionary *> *_points;
-  NSString *_unit;
-  GRClimatePlotView *_plot;
-  UILabel *_message, *_start, *_end, *_selected;
-  UISlider *_slider;
+  NSArray<NSNumber *> *_times, *_values;
+  NSString *_message;
+  BOOL _humidity;
+  double _bottom, _top, _step;
 }
 
-- (instancetype)initWithPoints:(NSArray<NSDictionary *> *)points unit:(NSString *)unit humidity:(BOOL)humidity
-                          name:(NSString *)name message:(NSString *)message {
+- (instancetype)initWithPoints:(NSArray<NSDictionary *> *)points humidity:(BOOL)humidity message:(NSString *)message {
   if(!(self = [super initWithFrame:CGRectZero])) { return nil; }
-  GRTheme *t = [GRTheme current];
-  _points = [points copy]; _unit = [unit copy];
-  if(!points.count) {
-    _message = GRWrappingLabel(message ?: @"Encara no hi ha historial disponible.", GRFont(12, UIFontWeightRegular), t.muted, 0);
-    [self addSubview:_message];
-    return self;
-  }
-  double minimum = [points[0][@"value"] doubleValue], maximum = minimum;
-  for(NSDictionary *point in points) { minimum = MIN(minimum, [point[@"value"] doubleValue]); maximum = MAX(maximum, [point[@"value"] doubleValue]); }
-  double margin = MAX((maximum - minimum) * 0.12, 0.5);
-  NSTimeInterval first = GRParseISODate(points[0][@"time"]).timeIntervalSince1970, last = GRParseISODate(points.lastObject[@"time"]).timeIntervalSince1970;
-  NSMutableArray *xs = [NSMutableArray array], *values = [NSMutableArray array];
+  self.opaque = NO; self.backgroundColor = [UIColor clearColor]; self.contentMode = UIViewContentModeRedraw;
+  _humidity = humidity; _message = [message copy];
+  NSMutableArray *kept = [NSMutableArray array], *times = [NSMutableArray array], *values = [NSMutableArray array];
   for(NSDictionary *point in points) {
-    NSTimeInterval time = GRParseISODate(point[@"time"]).timeIntervalSince1970;
-    [xs addObject:@(8 + (last == first ? 0 : (time - first) * 304 / (last - first)))];
-    [values addObject:point[@"value"]];
+    NSDate *date = GRParseISODate(GRStr(point[@"time"]));
+    NSNumber *value = GRNum(point[@"value"]);
+    if(!date || !value) { continue; }
+    [kept addObject:point]; [times addObject:@(date.timeIntervalSince1970)]; [values addObject:value];
   }
-  _plot = [GRClimatePlotView new];
-  _plot.backgroundColor = [UIColor clearColor]; _plot.contentMode = UIViewContentModeRedraw; _plot.opaque = NO;
-  _plot.xs = xs; _plot.values = values; _plot.bottom = minimum - margin; _plot.span = maximum - minimum + 2 * margin;
-  _plot.humidity = humidity; _plot.selectedIndex = points.count - 1;
-  _plot.isAccessibilityElement = YES; _plot.accessibilityLabel = [@"Historial de " stringByAppendingString:name];
-  [self addSubview:_plot];
-  _start = GRLabel([GRLogic climateTime:points[0][@"time"]], GRFont(10, UIFontWeightRegular), t.muted);
-  _end = GRLabel([GRLogic climateTime:points.lastObject[@"time"]], GRFont(10, UIFontWeightRegular), t.muted);
-  _end.textAlignment = NSTextAlignmentRight;
-  _selected = GRLabel(nil, [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightRegular], t.text);
-  _slider = [UISlider new];
-  _slider.minimumValue = 0; _slider.maximumValue = MAX(0, (float)points.count - 1); _slider.value = _slider.maximumValue;
-  _slider.minimumTrackTintColor = humidity ? t.humidityLine : t.temperatureLine;
-  _slider.maximumTrackTintColor = t.line;
-  _slider.accessibilityLabel = [NSString stringWithFormat:@"Consulta l’historial de %@", name];
-  [_slider addTarget:self action:@selector(selectPoint) forControlEvents:UIControlEventValueChanged];
-  for(UIView *view in @[_start, _end, _selected, _slider]) { [self addSubview:view]; }
-  [self selectPoint];
+  _points = kept; _times = times; _values = values;
+  _selectedIndex = (NSInteger)kept.count - 1;
+  if(kept.count) {
+    double minimum = [values[0] doubleValue], maximum = minimum;
+    for(NSNumber *value in values) { minimum = MIN(minimum, value.doubleValue); maximum = MAX(maximum, value.doubleValue); }
+    _step = GRNiceStep(MAX((maximum - minimum) / 4, humidity ? 1 : .2));
+    _bottom = floor(minimum / _step) * _step; _top = ceil(maximum / _step) * _step;
+    if(_top - _bottom < _step * 2) { _bottom -= _step; _top += _step; }
+    [self addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(touched:)]];
+    [self addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(touched:)]];
+    self.isAccessibilityElement = YES;
+    self.accessibilityTraits = UIAccessibilityTraitAdjustable;
+    self.accessibilityLabel = humidity ? @"Historial d’humitat" : @"Historial de temperatura";
+  }
   return self;
 }
 
-- (void)selectPoint {
-  NSInteger index = (NSInteger)lroundf(_slider.value);
+- (CGRect)plot {
+  return CGRectMake(GRPlotLeft, GRPlotTop, MAX(1, self.bounds.size.width - GRPlotLeft - GRPlotRight), MAX(1, self.bounds.size.height - GRPlotTop - GRPlotBottom));
+}
+
+- (CGPoint)pointAt:(NSUInteger)i {
+  CGRect plot = [self plot];
+  double first = _times.firstObject.doubleValue, last = _times.lastObject.doubleValue;
+  CGFloat x = last > first ? CGRectGetMinX(plot) + (_times[i].doubleValue - first) / (last - first) * plot.size.width : CGRectGetMidX(plot);
+  CGFloat y = CGRectGetMaxY(plot) - (_values[i].doubleValue - _bottom) / (_top - _bottom) * plot.size.height;
+  return CGPointMake(x, y);
+}
+
+- (NSString *)unitText:(double)value {
+  return _humidity ? [NSString stringWithFormat:@"%ld%%", GRRound(value)] : [[GRLogic shortNumber:value] stringByAppendingString:@"°"];
+}
+
+- (void)drawText:(NSString *)text at:(CGPoint)point align:(NSTextAlignment)align color:(UIColor *)color {
+  NSDictionary *attributes = @{NSFontAttributeName: GRDigits(12, UIFontWeightRegular), NSForegroundColorAttributeName: color};
+  CGSize size = [text sizeWithAttributes:attributes];
+  CGFloat x = align == NSTextAlignmentRight ? point.x - size.width : (align == NSTextAlignmentCenter ? point.x - size.width / 2 : point.x);
+  [text drawAtPoint:CGPointMake(x, point.y - size.height / 2) withAttributes:attributes];
+}
+
+- (void)drawRect:(CGRect)rect {
+  GRTheme *t = [GRTheme current];
+  if(!_points.count) {
+    NSMutableParagraphStyle *paragraph = [NSMutableParagraphStyle new];
+    paragraph.alignment = NSTextAlignmentCenter;
+    NSDictionary *attributes = @{NSFontAttributeName: GRFont(18, UIFontWeightLight), NSForegroundColorAttributeName: t.muted, NSParagraphStyleAttributeName: paragraph};
+    NSString *text = _message ?: @"Encara no hi ha historial disponible.";
+    CGRect box = CGRectInset(self.bounds, 20, 0);
+    CGFloat height = ceil([text boundingRectWithSize:CGSizeMake(box.size.width, CGFLOAT_MAX) options:NSStringDrawingUsesLineFragmentOrigin attributes:attributes context:nil].size.height);
+    [text drawInRect:CGRectMake(box.origin.x, (self.bounds.size.height - height) / 2, box.size.width, height) withAttributes:attributes];
+    return;
+  }
+  CGRect plot = [self plot];
+  // Horizontal grid with value labels.
+  for(double value = _bottom; value <= _top + _step / 2; value += _step) {
+    CGFloat y = round(CGRectGetMaxY(plot) - (value - _bottom) / (_top - _bottom) * plot.size.height) + .5;
+    UIBezierPath *grid = [UIBezierPath bezierPath];
+    [grid moveToPoint:CGPointMake(CGRectGetMinX(plot), y)]; [grid addLineToPoint:CGPointMake(CGRectGetMaxX(plot), y)];
+    grid.lineWidth = 1; [t.line setStroke]; [grid stroke];
+    [self drawText:[self unitText:value] at:CGPointMake(CGRectGetMinX(plot) - 12, y) align:NSTextAlignmentRight color:t.muted];
+  }
+  // Five time labels; hours for a day or two, day/month beyond.
+  double first = _times.firstObject.doubleValue, last = _times.lastObject.doubleValue;
+  NSCalendar *calendar = [NSCalendar currentCalendar];
+  for(NSInteger i = 0; i <= 4 && last > first; i++) {
+    double time = first + (last - first) * i / 4;
+    NSDateComponents *c = [calendar components:NSCalendarUnitDay|NSCalendarUnitMonth|NSCalendarUnitHour|NSCalendarUnitMinute fromDate:[NSDate dateWithTimeIntervalSince1970:time]];
+    NSString *label = last - first <= 36 * 3600 ? [NSString stringWithFormat:@"%@:%@", GRPad2(c.hour), GRPad2(c.minute)] : [NSString stringWithFormat:@"%ld/%ld", (long)c.day, (long)c.month];
+    CGFloat x = CGRectGetMinX(plot) + plot.size.width * i / 4;
+    [self drawText:label at:CGPointMake(x, CGRectGetMaxY(plot) + 18) align:i == 0 ? NSTextAlignmentLeft : (i == 4 ? NSTextAlignmentRight : NSTextAlignmentCenter) color:t.muted];
+  }
+  UIColor *color = _humidity ? t.humidityLine : t.temperatureLine;
+  UIBezierPath *line = [UIBezierPath bezierPath];
+  for(NSUInteger i = 0; i < _values.count; i++) {
+    CGPoint point = [self pointAt:i];
+    if(i == 0) { [line moveToPoint:point]; } else { [line addLineToPoint:point]; }
+  }
+  UIBezierPath *area = [line copy];
+  [area addLineToPoint:CGPointMake([self pointAt:_values.count - 1].x, CGRectGetMaxY(plot))];
+  [area addLineToPoint:CGPointMake([self pointAt:0].x, CGRectGetMaxY(plot))];
+  [area closePath];
+  [[color colorWithAlphaComponent:t.night ? .1 : .14] setFill]; [area fill];
+  line.lineWidth = 2.5; line.lineCapStyle = kCGLineCapRound; line.lineJoinStyle = kCGLineJoinRound;
+  [color setStroke]; [line stroke];
+  // Selected point: guide line and marker.
+  CGPoint selected = [self pointAt:(NSUInteger)_selectedIndex];
+  UIBezierPath *guide = [UIBezierPath bezierPath];
+  [guide moveToPoint:CGPointMake(selected.x, CGRectGetMinY(plot))]; [guide addLineToPoint:CGPointMake(selected.x, CGRectGetMaxY(plot))];
+  guide.lineWidth = 1; [t.edge setStroke]; [guide stroke];
+  UIBezierPath *marker = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(selected.x - 7, selected.y - 7, 14, 14)];
+  [color setFill]; [marker fill];
+  marker.lineWidth = 3; [t.background setStroke]; [marker stroke];
+}
+
+- (void)selectIndex:(NSInteger)index {
+  if(!_points.count) { return; }
   index = MAX(0, MIN((NSInteger)_points.count - 1, index));
-  _plot.selectedIndex = index; [_plot setNeedsDisplay];
-  NSDictionary *point = _points[index];
-  _selected.text = [NSString stringWithFormat:@"%@ · %@%@", [GRLogic climateTime:point[@"time"]], GRFormatNumber([point[@"value"] doubleValue]), _unit.length ? [@" " stringByAppendingString:_unit] : @""];
+  _selectedIndex = index;
+  self.accessibilityValue = [NSString stringWithFormat:@"%@, %@", [GRLogic climateTime:_points[index][@"time"]], [self unitText:_values[index].doubleValue]];
+  [self setNeedsDisplay];
+  if(self.onSelect) { self.onSelect(index); }
 }
 
-- (CGFloat)heightForWidth:(CGFloat)width {
-  if(_message) { return 8 + MAX(24, ceil([_message sizeThatFits:CGSizeMake(width, CGFLOAT_MAX)].height)); }
-  return GRPlotHeight + 14 + 10 + 20 + 2 + 32;
+- (void)touched:(UIGestureRecognizer *)gesture {
+  CGFloat x = [gesture locationInView:self].x;
+  NSInteger best = 0; CGFloat distance = CGFLOAT_MAX;
+  for(NSUInteger i = 0; i < _values.count; i++) {
+    CGFloat d = fabs([self pointAt:i].x - x);
+    if(d < distance) { distance = d; best = (NSInteger)i; }
+  }
+  if(best != _selectedIndex) { [self selectIndex:best]; }
 }
 
-- (CGSize)sizeThatFits:(CGSize)size { return CGSizeMake(size.width, [self heightForWidth:size.width]); }
-
-- (void)layoutSubviews {
-  [super layoutSubviews];
-  CGFloat width = self.bounds.size.width;
-  if(_message) { _message.frame = CGRectMake(0, 8, width, ceil([_message sizeThatFits:CGSizeMake(width, CGFLOAT_MAX)].height)); return; }
-  _plot.frame = CGRectMake(0, 0, width, GRPlotHeight);
-  _start.frame = CGRectMake(0, GRPlotHeight, width / 2, 14);
-  _end.frame = CGRectMake(width / 2, GRPlotHeight, width / 2, 14);
-  _selected.frame = CGRectMake(0, GRPlotHeight + 14 + 10, width, 20);
-  _slider.frame = CGRectMake(0, GRPlotHeight + 14 + 10 + 22, width, 32);
-}
+- (void)accessibilityIncrement { [self selectIndex:_selectedIndex + MAX(1, (NSInteger)_points.count / 24)]; }
+- (void)accessibilityDecrement { [self selectIndex:_selectedIndex - MAX(1, (NSInteger)_points.count / 24)]; }
 
 @end
 
