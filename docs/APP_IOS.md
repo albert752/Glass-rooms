@@ -11,10 +11,15 @@ Està pensat per a un iPad fix a la paret i llegit a distància.
   - la temperatura i la humitat interiors, amb la mitjana dels sensors disponibles;
   - l'estat de l'alarma o, si no n'hi ha cap, els llums encesos;
   - la corba de temperatura del primer sensor amb historial, amb el període triat a Clima (24 h per defecte).
-- **Navegació inferior:** Estances, Resum, Clima, Seguretat, tema (sol o lluna) i Ajustos.
+- **Navegació inferior:** Estances, Resum, Clima, Seguretat i Ajustos. El tema (automàtic, dia o nit) només es tria a Ajustos (des de 1.1.9).
 - **Estances:** una fila per estança, amb un punt ambre si té llums encesos, la temperatura i un interruptor de llums. Tocar el nom obre el calaix de l'estança. Sota la llista hi ha «Encén tot» i «Apaga tot».
 - **Avisos:** les ordres de llums no mostren cap missatge en enviar-se ni quan funcionen; l'interruptor i l'estat actualitzat ja ho indiquen. Només apareix un avís si l'ordre falla o si s'ometen llums (des de 1.1.7).
 - **Clima (des de 1.1.8):** ocupa tota la pantalla i la columna del rellotge s'amaga. A dalt hi ha el període (6 h, 24 h, 7 dies, 1 mes) i una fitxa per sensor amb l'estança i la lectura actual. Sota hi ha el valor del punt triat en gran, amb el mínim, el màxim i la mitjana del període. La gràfica té eixos de valor i d'hora, i tocar-la o arrossegar-hi el dit mostra cada registre.
+- **Llums que no responen (des de 1.1.9):**
+  - Un llum que Home Assistant marca com a no disponible queda bloquejat a la següent actualització en directe, normalment en un o dos segons.
+  - Home Assistant pot trigar minuts a adonar-se que un llum s'ha desconnectat, i aquest retard depèn de la integració. Mentrestant, si el llum no arriba a l'estat demanat 10 segons després d'una ordre, l'app el marca com a «No respon a les ordres» i n'atura els controls.
+  - El bloqueig s'aixeca quan Home Assistant informa un estat nou, o al cap de 2 minuts.
+  - Si es perden les actualitzacions en directe, l'estat es torna a llegir cada 8 segons.
 - **Calaix lateral:** surt per la dreta. Cada dispositiu amb ordres d'encendre i apagar té un interruptor. La brillantor, la velocitat i el volum s'envien en deixar anar el control lliscant, sense botó «Aplica».
 - **Temes:** de nit, negre pur amb text ambre; de dia, paper càlid amb ambre torrat. El mode automàtic canvia a les 7 i a les 20 h.
 - **Orientació:** en horitzontal, el rellotge queda a l'esquerra i el contingut a la dreta. En vertical, el rellotge va a dalt i la llista a sota.
@@ -33,7 +38,7 @@ L'app parla només amb el servidor de Glass Rooms (port `8099` per defecte), mai
 - Clima amb lectura actual i historial de 6 h, 24 h, 7 dies i 1 mes; tocar la gràfica mostra l'hora i el valor de cada punt.
 - Controls de botó, interval (brillantor, temperatura de color, velocitat, volum) i mode, amb els motius de bloqueig del servidor.
 - Alarma amb confirmació i PIN d'alarma quan la política ho exigeix. El PIN s'esborra del camp abans d'enviar-lo.
-- Temes de dia i nit (automàtic de 7 a 20 h) i botó del sol o la lluna a la navegació.
+- Temes de dia i nit (automàtic de 7 a 20 h), triats a Ajustos.
 - Actualitzacions en directe (`/api/updates`), lectura de seguretat cada 30 segons i relectures als 2, 5, 10, 20 i 30 segons després d'una ordre de llum. L'historial de clima es demana com a màxim cada 2 minuts, perquè la columna del rellotge en mostra la tendència a totes les vistes.
 - Informe de verificació (`/api/audit`).
 

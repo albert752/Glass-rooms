@@ -32,7 +32,6 @@ static NSString *const GRVersion = @GR_VERSION;
   }
   return self;
 }
-- (void)setIconName:(NSString *)name { self.icon.image = GRIcon(name, NO); }
 - (void)applyTheme {
   GRTheme *t = [GRTheme current];
   self.icon.tintColor = self.active ? t.accent : t.muted;
@@ -82,7 +81,7 @@ static UIView *GRDot(BOOL lit) {
   NSArray<UILabel *> *_statLabels, *_statValues;
   GRSparklineView *_spark;
   NSMutableArray<GRNavButton *> *_navButtons;
-  GRNavButton *_themeButton, *_settingsButton;
+  GRNavButton *_settingsButton;
   // Content column
   UIScrollView *_scroll;
   GRFlowView *_viewFlow;
@@ -165,11 +164,9 @@ static UIView *GRDot(BOOL lit) {
     [button addTarget:self action:@selector(navTapped:) forControlEvents:UIControlEventTouchUpInside];
     [_navButtons addObject:button]; [self.view addSubview:button];
   }
-  _themeButton = [[GRNavButton alloc] initWithIcon:@"sun" destination:@"theme" accessibility:@"Canvia el tema"];
-  [_themeButton addTarget:self action:@selector(toggleTheme) forControlEvents:UIControlEventTouchUpInside];
   _settingsButton = [[GRNavButton alloc] initWithIcon:@"settings" destination:@"settings" accessibility:@"Ajustos"];
   [_settingsButton addTarget:self action:@selector(openSettings) forControlEvents:UIControlEventTouchUpInside];
-  [self.view addSubview:_themeButton]; [self.view addSubview:_settingsButton];
+  [self.view addSubview:_settingsButton];
 
   _scroll = [UIScrollView new];
   _scroll.alwaysBounceVertical = YES;
@@ -262,7 +259,7 @@ static UIView *GRDot(BOOL lit) {
 
   CGFloat navY = size.height - (landscape ? 32 : 28) - 56;
   NSMutableArray *nav = [_navButtons mutableCopy];
-  [nav addObject:_themeButton]; [nav addObject:_settingsButton];
+  [nav addObject:_settingsButton];
   CGFloat navWidth = nav.count * 56 + (nav.count - 1) * 12;
   CGFloat navX = landscape ? side : (size.width - navWidth) / 2;
   for(GRNavButton *button in nav) { button.frame = CGRectMake(navX, navY, 56, 56); navX += 56 + 12; }
@@ -335,9 +332,7 @@ static UIView *GRDot(BOOL lit) {
   _sparkCaption.textColor = t.muted; _status.textColor = t.muted;
   [_spark setNeedsDisplay];
   for(GRNavButton *button in _navButtons) { [button applyTheme]; }
-  [_themeButton setIconName:_night ? @"moon" : @"sun"];
-  _themeButton.accessibilityLabel = _night ? @"Activa el mode de dia" : @"Activa el mode de nit";
-  [_themeButton applyTheme]; [_settingsButton applyTheme];
+  [_settingsButton applyTheme];
   _backdrop.backgroundColor = t.backdrop;
   _drawer.backgroundColor = t.panel;
   [_drawer viewWithTag:8].backgroundColor = t.edge;
@@ -355,11 +350,6 @@ static UIView *GRDot(BOOL lit) {
   [self applyThemeColors];
   [self renderView];
   [self rebuildModal];
-}
-
-- (void)toggleTheme {
-  [GRPreferences shared].theme = _night ? @"day" : @"night";
-  [self applyTheme];
 }
 
 - (void)setThemeChoice:(NSString *)theme {
@@ -833,6 +823,9 @@ static UIView *GRDot(BOOL lit) {
   NSArray *raw = GRArray(self.model.historySeries[_climateSensor]) ?: @[];
   NSMutableArray *points = [NSMutableArray array];
   for(id point in raw) { if(GRDict(point) && GRNum(point[@"value"]) && GRParseISODate(GRStr(point[@"time"]))) { [points addObject:point]; } }
+  // One record cannot draw a line; the reading above still shows the current value.
+  BOOL sparse = points.count == 1;
+  if(sparse) { [points removeAllObjects]; }
   BOOL humidity = [GRDict(chosen[@"attributes"])[@"device_class"] isEqual:@"humidity"];
   UILabel *value = GRLabel(nil, GRDigits(64, UIFontWeightThin), t.highlight);
   value.adjustsFontSizeToFitWidth = YES; value.minimumScaleFactor = .6;
@@ -871,7 +864,9 @@ static UIView *GRDot(BOOL lit) {
   };
   [_viewFlow addView:readout top:20];
 
-  NSString *message = self.model.historyLoading ? @"Carregant l’historial…" : (self.model.historyError ?: @"Encara no hi ha historial disponible.");
+  NSString *message = self.model.historyLoading ? @"Carregant l’historial…"
+    : (self.model.historyError ?: (sparse || raw.count ? @"Home Assistant només té un registre d’aquest sensor en aquest període. Prova un període més llarg."
+                                                      : @"Home Assistant no té historial d’aquest sensor. Comprova que el recorder el desa."));
   GRClimateChartView *chart = [[GRClimateChartView alloc] initWithPoints:points humidity:humidity message:message];
   NSDictionary *sensor = chosen;
   BOOL connected = self.model.connected;
@@ -1429,7 +1424,7 @@ static BOOL GRIsActiveState(NSString *domain, NSString *state) {
     for(NSUInteger i = 0; i < segments.count; i++) { [segments[i] setFrame:CGRectMake(i * (w + 8), 0, w, 46)]; }
   };
   [section addView:segmentRow top:14];
-  [section addView:[self note:@"Automàtic: dia de 7 a 20 h, segons el rellotge de l’iPad. El botó del sol o la lluna canvia el tema a l’instant."] top:10];
+  [section addView:[self note:@"Automàtic: dia de 7 a 20 h, segons el rellotge de l’iPad."] top:10];
   [parent addView:section top:0];
   [parent addView:[GRRuleView ruleWithColor:t.line] top:0];
 

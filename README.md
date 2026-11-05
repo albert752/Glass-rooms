@@ -1,10 +1,17 @@
 # Glass Rooms
 
-## Revisió 1.1.8
+## Revisió 1.1.9
 
 **Migració des de 1.0.x:** a les opcions privades de Glass Rooms, elimina `panel_password` i configura `panel_pin` amb un PIN nou de 6 a 8 dígits. Desa les opcions i reinicia l'aplicació. La contrasenya antiga no es converteix automàticament en PIN; si falta `panel_pin`, el servidor no arrenca. L'accés al panell es fa amb el teclat numèric de la pàgina. El PIN d'alarma, si n'hi ha, continua sent independent.
 
-**Novetat 1.1.8:** a l'app per a iPad, la pàgina de Clima ocupa tota la pantalla. Té una gràfica gran amb eixos que es pot tocar o arrossegar per veure cada punt, una fitxa per sensor, la lectura en gran i el mínim, el màxim i la mitjana del període.
+**Novetat 1.1.9:**
+
+- **Historial de clima:** cada sèrie es tanca amb la lectura actual del sensor. Així, un sensor que no ha canviat en tot el període (sovint la humitat) dibuixa una línia en lloc de quedar buit, tant al panell web com a l'app.
+- **Llums que no responen:** si un llum no arriba a l'estat demanat 10 segons després d'una ordre, l'app el bloqueja. El bloqueig dura fins que Home Assistant n'informa un estat nou o fins que passen 2 minuts.
+- **Sense actualitzacions en directe:** l'app torna a llegir l'estat cada 8 segons en lloc de cada 30.
+- **Tema:** l'app ja no té el botó del sol o la lluna; el tema es tria a Ajustos.
+
+**1.1.8:** a l'app per a iPad, la pàgina de Clima ocupa tota la pantalla. Té una gràfica gran amb eixos que es pot tocar o arrossegar per veure cada punt, una fitxa per sensor, la lectura en gran i el mínim, el màxim i la mitjana del període.
 
 **1.1.7:** l'app per a iPad ja no mostra cap avís quan envia una ordre de llums; només avisa si falla o si s'ometen llums.
 

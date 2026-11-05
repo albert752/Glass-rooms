@@ -122,7 +122,7 @@ static void serverTests(NSString *port, NSString *token) {
   model.climateVisible = YES;
   waitFor(^{ return (BOOL)!model.busy; }, 5);
   [model loadClimateHistory];
-  CHECK(waitFor(^{ return (BOOL)(!model.historyLoading && [model.historySeries[@"sensor.test_temperatura"] count] == 2); }, 5), @"history: %@ %@", model.historySeries, model.historyError);
+  CHECK(waitFor(^{ return (BOOL)(!model.historyLoading && [model.historySeries[@"sensor.test_temperatura"] count] == 3); }, 5), @"history: %@ %@", model.historySeries, model.historyError);
 
   __block NSString *audit = nil;
   [model loadAudit:^(NSString *text) { audit = text; }];

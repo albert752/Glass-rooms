@@ -770,8 +770,17 @@ class App:
                     continue
                 series[entity_id].append({"time": instant.astimezone(datetime.timezone.utc).isoformat(),
                                           "value": number})
+        # A sensor that has not changed (humidity often) has a single record at the start of the period.
+        # Its current reading is still valid now, so it closes the series and the chart shows a line.
+        now = datetime.datetime.now(datetime.timezone.utc)
+        current = {item["entity_id"]: item for item in entities_for(states, services, self.settings, True)}
         for entity_id, points in series.items():
             points.sort(key=lambda point: point["time"])
+            item = current.get(entity_id) or {}
+            value = item.get("state")
+            if item.get("status") == "ok" and isinstance(value, str) and re.fullmatch(r"-?\d+(?:\.\d+)?", value) \
+                    and math.isfinite(float(value)) and (not points or points[-1]["time"] < now.isoformat()):
+                points.append({"time": now.isoformat(), "value": float(value)})
             if len(points) > 181:
                 step = (len(points) - 1) / 180
                 series[entity_id] = [points[round(index * step)] for index in range(181)]

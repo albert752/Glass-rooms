@@ -479,8 +479,10 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(self.fake.history_requests, [([temperature, humidity], 24)])
         self.assertEqual(list(result["series"]), [temperature, humidity])
-        self.assertEqual([point["value"] for point in result["series"][temperature]], [21.0, 21.4])
-        self.assertEqual(result["series"][humidity][0]["value"], 48)
+        # The current reading closes each series, so an unchanged sensor still draws a line.
+        self.assertEqual([point["value"] for point in result["series"][temperature]], [21.0, 21.4, 21.4])
+        self.assertEqual([point["value"] for point in result["series"][humidity]], [48, 48])
+        self.assertGreater(result["series"][humidity][-1]["time"], result["series"][humidity][0]["time"])
         status, month, _ = self.call("/api/climate-history?hours=720")
         self.assertEqual(status, 200)
         self.assertEqual(month["hours"], 720)

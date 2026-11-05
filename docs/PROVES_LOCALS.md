@@ -94,3 +94,17 @@ No s'ha instal·lat l'app a l'iPad. La compilació Mac Catalyst no emula iOS 9 n
 | `python3 -m unittest discover -s tests` (inclou `ios/scripts/test.sh`) | 53 proves superades; 47 comprovacions natives sense errors |
 | `ios/scripts/build.sh` i instal·lació a l'iPad mini 1 amb `ideviceinstaller` | IPA 1.1.8 compilada contra l'SDK 9.3 i instal·lada |
 | Previsualització Mac Catalyst a 1024×768 i 768×1024, de dia i de nit, amb un Home Assistant simulat | Clima a pantalla completa amb fitxes de sensor, lectura, mínim/màxim/mitjana i gràfica amb eixos; la resta de vistes conserven la columna del rellotge |
+
+## Revisió 1.1.9 — llums que no responen i historial d'humitat
+
+5 de novembre de 2026.
+
+| Comprovació executada | Resultat |
+|---|---|
+| `tests/test_backend.py` | Superada. Cada sèrie de clima es tanca amb la lectura actual; un sensor amb un sol registre retorna dos punts |
+| Previsualització Mac Catalyst amb un llum que ignora les ordres | 12 segons després de l'ordre, l'interruptor queda desactivat, la fila indica «1 llum sense connexió» i surt l'avís «no respon» |
+| Previsualització Mac Catalyst amb un sensor d'humitat sense canvis | La gràfica dibuixa una línia plana de 24 h |
+| `python3 -m unittest discover -s tests` i `ios/scripts/test.sh` | 53 proves i 47 comprovacions natives superades (l'historial del client compta el punt actual afegit) |
+| Instal·lació a l'iPad mini 1 amb `ideviceinstaller` | IPA 1.1.9 instal·lada; el botó de tema ja no hi és i el tema es tria a Ajustos |
+
+No comprovat: el comportament amb el llum i el sensor d'humitat reals de Home Assistant.

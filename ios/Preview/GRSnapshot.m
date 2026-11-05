@@ -19,6 +19,12 @@ static UISwitch *GRFindSwitch(UIView *view, NSString *identifier) {
   return nil;
 }
 
+static UIControl *GRFindControl(UIView *view, NSString *identifier) {
+  if([view isKindOfClass:[UIControl class]] && [view.accessibilityIdentifier isEqualToString:identifier]) { return (UIControl *)view; }
+  for(UIView *child in view.subviews) { UIControl *found = GRFindControl(child, identifier); if(found) { return found; } }
+  return nil;
+}
+
 static void GRRun(NSArray *steps, NSUInteger index) {
   if(index >= steps.count) { exit(0); }
   NSArray *step = steps[index];
@@ -52,6 +58,7 @@ __attribute__((constructor)) static void GRInstallSnapshots(void) {
     add(@"settings-day", ^{ [panel closeModal]; [panel openSettings]; });
     add(@"rooms-night", ^{ [panel closeModal]; [panel setThemeChoice:@"night"]; [panel navigate:@"rooms"]; });
     add(@"climate-night", ^{ [panel navigate:@"climate"]; });
+    add(@"climate-humidity-night", ^{ [GRFindControl(window, @"sensor.hum_menjador") sendActionsForControlEvents:UIControlEventTouchUpInside]; });
     add(@"room-drawer-night", ^{ [panel navigate:@"rooms"]; [panel openRoom:@"menjador"]; });
     add(@"lights-drawer-night", ^{ [panel closeModal]; [panel navigate:@"lights"]; });
     add(@"after-switch", ^{
@@ -60,6 +67,13 @@ __attribute__((constructor)) static void GRInstallSnapshots(void) {
       [toggle setOn:!toggle.on animated:NO];
       [toggle sendActionsForControlEvents:UIControlEventValueChanged];
     });
+    add(@"", ^{
+      UISwitch *toggle = GRFindSwitch(window, @"habitacio");
+      [toggle setOn:!toggle.on animated:NO];
+      [toggle sendActionsForControlEvents:UIControlEventValueChanged];
+    });
+    for(NSInteger i = 0; i < 8; i++) { add(@"", ^{}); }
+    add(@"after-unresponsive", ^{});
     add(@"", ^{ [panel setThemeChoice:@"auto"]; });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ GRRun(steps, 0); });
   }];

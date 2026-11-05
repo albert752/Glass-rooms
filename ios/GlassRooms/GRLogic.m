@@ -31,6 +31,7 @@ static NSCalendar *GRCalendar(void) {
   if((!connected && !demo) || !entity || [status isEqualToString:@"pending"]) { return @"Pendent de connexió"; }
   if([status isEqualToString:@"missing"]) { return @"No trobada a Home Assistant"; }
   if([status isEqualToString:@"unavailable"]) { return @"No disponible"; }
+  if([status isEqualToString:@"unresponsive"]) { return @"No respon a les ordres"; }
   if([status isEqualToString:@"unknown"] || !state) { return @"Estat desconegut"; }
   NSDictionary *names = @{@"on":@"Encès",@"off":@"Apagat",@"disarmed":@"Desarmada",@"armed_home":@"Armada · a casa",
                           @"armed_away":@"Armada · fora",@"armed_night":@"Armada · nit",@"armed_vacation":@"Armada · vacances",

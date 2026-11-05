@@ -3,6 +3,12 @@
 #import "GRUtil.h"
 
 static const NSTimeInterval GRPollInterval = 30;
+// Without the live event stream the safety read runs more often, so an unavailable light is noticed sooner.
+static const NSTimeInterval GRPollIntervalWithoutLive = 8;
+// A light that has not reached the requested state this long after a command is treated as not responding.
+static const NSTimeInterval GRConfirmationDeadline = 10;
+// How long that local block lasts if Home Assistant keeps reporting the same state (then a new try is allowed).
+static const NSTimeInterval GRUnresponsiveBlock = 120;
 
 @interface GRPanelModel ()
 @property (nonatomic, strong, readwrite) GRAPIClient *client;
@@ -24,6 +30,10 @@ static const NSTimeInterval GRPollInterval = 30;
   long long _updateRevision;
   NSUInteger _updateGeneration, _historyGeneration, _clientGeneration;
   NSTimeInterval _historyLoadedAt;
+  // Entities exactly as the server sent them; self.entities adds the local "not responding" blocks.
+  NSArray<NSDictionary *> *_serverEntities;
+  // entity_id -> @{state, until}: lights that ignored a command, blocked until HA reports something new.
+  NSMutableDictionary<NSString *, NSDictionary *> *_unresponsive;
 }
 
 - (instancetype)init {
@@ -32,6 +42,8 @@ static const NSTimeInterval GRPollInterval = 30;
     _historyHours = 24;
     _historySeries = @{};
     _actionRefreshTimers = [NSMutableArray array];
+    _serverEntities = @[];
+    _unresponsive = [NSMutableDictionary dictionary];
   }
   return self;
 }
@@ -53,6 +65,7 @@ static const NSTimeInterval GRPollInterval = 30;
 
 - (void)clearState {
   self.connected = NO; self.liveUpdates = NO; self.entities = @[]; self.fetchedAt = nil; self.error = nil;
+  _serverEntities = @[]; [_unresponsive removeAllObjects];
   [self resetHistory];
 }
 
@@ -145,7 +158,8 @@ static const NSTimeInterval GRPollInterval = 30;
       self.error = GRStr(data[@"error"]);
       NSMutableArray *entities = [NSMutableArray array];
       for(id item in GRArray(data[@"entities"]) ?: @[]) { if(GRDict(item) && GRStr(item[@"entity_id"])) { [entities addObject:item]; } }
-      self.entities = entities;
+      _serverEntities = entities;
+      self.entities = [self entitiesWithLocalBlocks];
       [self checkActionConfirmation];
     }
     BOOL changed = force || ![before isEqual:[self visualSignature]];
@@ -164,7 +178,7 @@ static const NSTimeInterval GRPollInterval = 30;
   [_pollTimer cancel]; _pollTimer = nil;
   if(!_background && (self.authenticated || self.preview)) {
     __weak GRPanelModel *weakSelf = self;
-    _pollTimer = [GRTimer after:GRPollInterval block:^{ [weakSelf refresh:NO]; }];
+    _pollTimer = [GRTimer after:self.liveUpdates ? GRPollInterval : GRPollIntervalWithoutLive block:^{ [weakSelf refresh:NO]; }];
   }
 }
 
@@ -264,6 +278,48 @@ static const NSTimeInterval GRPollInterval = 30;
       if(model && model->_pendingConfirmation && !model->_background) { [model refresh:NO]; }
     }]];
   }
+  // Two seconds after the 10 s read, whatever has not changed is blocked locally.
+  [_actionRefreshTimers addObject:[GRTimer after:GRConfirmationDeadline + 2 block:^{ [weakSelf blockUnconfirmedLights]; }]];
+}
+
+- (void)blockUnconfirmedLights {
+  if(!_pendingConfirmation || !self.connected || _background) { return; }
+  NSString *target = _pendingConfirmation[@"target"];
+  NSMutableArray *names = [NSMutableArray array];
+  for(NSString *entityId in _pendingConfirmation[@"ids"]) {
+    for(NSDictionary *entity in _serverEntities) {
+      if(![entity[@"entity_id"] isEqual:entityId] || ![GRStr(entity[@"status"]) isEqualToString:@"ok"]) { continue; }
+      if([GRStr(entity[@"state"]) isEqualToString:target]) { continue; }
+      _unresponsive[entityId] = @{@"state": GRStr(entity[@"state"]) ?: @"", @"until": [NSDate dateWithTimeIntervalSinceNow:GRUnresponsiveBlock]};
+      [names addObject:GRStr(entity[@"name"]) ?: entityId];
+    }
+  }
+  _pendingConfirmation = nil;
+  if(!names.count) { return; }
+  self.entities = [self entitiesWithLocalBlocks];
+  [self.delegate panelModel:self didUpdateWithForce:NO changed:YES];
+  [self.delegate panelModel:self showToast:[NSString stringWithFormat:@"%@ no respon. Queda bloquejat fins que Home Assistant n’informi un estat nou.",
+                                            [names componentsJoinedByString:@", "]]];
+}
+
+// Marks blocked lights as "unresponsive" (no controls) while HA still reports the state they had when they ignored the command.
+- (NSArray<NSDictionary *> *)entitiesWithLocalBlocks {
+  if(!_unresponsive.count) { return _serverEntities; }
+  NSDate *now = [NSDate date];
+  NSMutableArray *result = [NSMutableArray arrayWithCapacity:_serverEntities.count];
+  for(NSDictionary *entity in _serverEntities) {
+    NSString *entityId = entity[@"entity_id"];
+    NSDictionary *block = _unresponsive[entityId];
+    if(block && ([now compare:block[@"until"]] != NSOrderedAscending || ![GRStr(entity[@"status"]) isEqualToString:@"ok"]
+                 || ![GRStr(entity[@"state"]) ?: @"" isEqualToString:block[@"state"]])) {
+      [_unresponsive removeObjectForKey:entityId]; block = nil;
+    }
+    if(!block) { [result addObject:entity]; continue; }
+    NSMutableDictionary *copy = [entity mutableCopy];
+    copy[@"status"] = @"unresponsive"; copy[@"controls"] = @[];
+    [result addObject:copy];
+  }
+  return result;
 }
 
 - (void)checkActionConfirmation {
