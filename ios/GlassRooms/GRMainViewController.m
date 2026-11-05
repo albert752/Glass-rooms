@@ -89,6 +89,14 @@ static UIView *GRDot(BOOL lit) {
   // Climate page: chosen sensor and the inspected point (-1 = latest).
   NSString *_climateSensor;
   NSInteger _climateIndex;
+  // Security page: chosen camera, last image per camera, the views showing it and the refresh loop.
+  NSString *_cameraEntity;
+  NSMutableDictionary<NSString *, UIImage *> *_cameraImages;
+  NSMapTable<NSString *, UIImageView *> *_cameraViews;
+  NSURLSessionDataTask *_cameraTask;
+  GRTimer *_cameraTimer;
+  BOOL _cameraFailed;
+  UIControl *_cameraZoom;
   CGFloat _renderedWidth;
   UIView *_toastView;
   UILabel *_toastLabel;
@@ -115,6 +123,8 @@ static UIView *GRDot(BOOL lit) {
     _model.climateVisible = YES;
     _currentView = @"rooms";
     _climateIndex = -1;
+    _cameraImages = [NSMutableDictionary dictionary];
+    _cameraViews = [NSMapTable strongToWeakObjectsMapTable];
     _navButtons = [NSMutableArray array];
   }
   return self;
@@ -285,15 +295,16 @@ static UIView *GRDot(BOOL lit) {
   }
 
   // The climate page takes the whole screen above the navigation: the clock column steps aside.
-  BOOL full = [_currentView isEqualToString:@"climate"];
+  BOOL full = [_currentView isEqualToString:@"climate"] || [_currentView isEqualToString:@"security"];
   NSMutableArray *column = [@[_clock, _date, _spark, _sparkCaption] mutableCopy];
   [column addObjectsFromArray:_statLabels]; [column addObjectsFromArray:_statValues];
   for(UIView *view in column) { view.alpha = full ? 0 : 1; }
-  _scroll.scrollEnabled = !full;
+  BOOL fixed = [_currentView isEqualToString:@"climate"];
+  _scroll.scrollEnabled = !fixed;
   if(full) {
     _scroll.frame = CGRectMake(side, top + 26, size.width - 2 * side, navY - 24 - (top + 26));
-    _scroll.contentInset = UIEdgeInsetsZero;
-    _scroll.contentOffset = CGPointZero;
+    _scroll.contentInset = fixed ? UIEdgeInsetsZero : UIEdgeInsetsMake(0, 0, 16, 0);
+    if(fixed) { _scroll.contentOffset = CGPointZero; }
     _status.textAlignment = NSTextAlignmentRight;
     _status.alpha = landscape ? 1 : 0;
     _status.frame = CGRectMake(navX, navY + 20, size.width - side - navX, 16);
@@ -380,6 +391,7 @@ static UIView *GRDot(BOOL lit) {
 
 - (void)appDidEnterBackground {
   [self.model enterBackground];
+  [self stopCameraRefresh];
   [_alarmField setText:@""];
   [_clockTimer cancel];
 }
@@ -387,6 +399,7 @@ static UIView *GRDot(BOOL lit) {
 - (void)appWillEnterForeground {
   [self clockTick];
   [self.model enterForeground];
+  [self updateCameraRefresh];
 }
 
 #pragma mark Model delegate
@@ -570,7 +583,6 @@ static UIView *GRDot(BOOL lit) {
 - (void)navigate:(NSString *)destination {
   [self closeModal];
   if([destination isEqualToString:@"lights"]) { [self openCategory:@"lights" title:@"Il·luminació"]; return; }
-  if([destination isEqualToString:@"security"]) { [self openCategory:@"security" title:@"Seguretat"]; return; }
   if([destination isEqualToString:@"scenes"]) { [self openCategory:@"scenes" title:@"Escenes i ambient"]; return; }
   _currentView = destination;
   [self renderView];
@@ -584,11 +596,13 @@ static UIView *GRDot(BOOL lit) {
   [_scroll addSubview:_viewFlow];
   for(GRNavButton *button in _navButtons) { button.active = [button.destination isEqualToString:_currentView]; }
   if([_currentView isEqualToString:@"climate"]) { [self renderClimate]; }
+  else if([_currentView isEqualToString:@"security"]) { [self renderSecurity]; }
   else if([_currentView isEqualToString:@"overview"]) { [self renderOverview]; }
   else { [self renderRooms]; }
   [self renderSide];
   [self layoutViewFlow];
   [self.model loadClimateHistory];
+  [self updateCameraRefresh];
 }
 
 - (void)renderRooms {
@@ -715,7 +729,7 @@ static UIView *GRDot(BOOL lit) {
 
 - (void)summaryTapped:(UIControl *)row {
   NSString *category = row.accessibilityIdentifier;
-  if([category isEqualToString:@"climate"]) { [self navigate:@"climate"]; return; }
+  if([category isEqualToString:@"climate"] || [category isEqualToString:@"security"]) { [self navigate:category]; return; }
   NSDictionary *titles = @{@"lights": @"Il·luminació", @"security": @"Seguretat", @"water": @"Aigua calenta", @"media": @"Música i televisió",
                            @"fans": @"Ventiladors", @"switches": @"Interruptors", @"scenes": @"Escenes", @"other": @"Altres dispositius"};
   [self openCategory:category title:titles[category] ?: @"Dispositius"];
@@ -902,6 +916,446 @@ static UIView *GRDot(BOOL lit) {
   [self renderView];
 }
 
+#pragma mark - Security page
+
+// Bordered card with a spaced heading and an optional note on the right.
+- (GRFlowView *)card:(NSString *)title note:(NSString *)note {
+  GRTheme *t = [GRTheme current];
+  GRFlowView *card = [GRFlowView new];
+  card.insets = UIEdgeInsetsMake(20, 22, 22, 22);
+  card.layer.cornerRadius = 20; card.layer.borderWidth = 1; card.layer.borderColor = t.edge.CGColor;
+  UILabel *heading = [self sectionLabel:title];
+  UILabel *side = GRLabel(note, GRFont(13, UIFontWeightRegular), t.muted);
+  side.textAlignment = NSTextAlignmentRight;
+  GRBlockView *row = [GRBlockView new];
+  [row addSubview:heading]; [row addSubview:side];
+  row.measure = ^CGFloat(CGFloat width) { return 18; };
+  row.layout = ^(UIView *view) {
+    CGFloat w = view.bounds.size.width;
+    CGFloat sideWidth = MIN(w * .55, ceil([side sizeThatFits:CGSizeZero].width));
+    heading.frame = CGRectMake(0, 0, w - sideWidth - 8, 18);
+    side.frame = CGRectMake(w - sideWidth, 0, sideWidth, 18);
+  };
+  [card addView:row top:0];
+  return card;
+}
+
+// Status row: dot, name, optional detail below, state on the right.
+- (UIView *)statusRow:(NSString *)name detail:(NSString *)detail state:(NSString *)state lit:(BOOL)lit issue:(BOOL)issue {
+  GRTheme *t = [GRTheme current];
+  UIView *dot = GRDot(lit);
+  if(issue) { dot.backgroundColor = t.issue; dot.layer.shadowOpacity = 0; }
+  UILabel *title = GRLabel(name, GRFont(18, UIFontWeightLight), lit ? t.highlight : t.text);
+  title.adjustsFontSizeToFitWidth = YES; title.minimumScaleFactor = .7;
+  UILabel *sub = detail.length ? GRLabel(detail, GRFont(12, UIFontWeightRegular), t.muted) : nil;
+  UILabel *value = GRLabel(state, GRFont(15, issue || lit ? UIFontWeightMedium : UIFontWeightRegular), issue ? t.issue : (lit ? t.accent : t.muted));
+  value.textAlignment = NSTextAlignmentRight;
+  UIView *rule = [UIView new]; rule.backgroundColor = t.line;
+  GRBlockView *row = [GRBlockView new];
+  for(UIView *view in @[dot, title, value, rule]) { [row addSubview:view]; }
+  if(sub) { [row addSubview:sub]; }
+  row.isAccessibilityElement = YES;
+  row.accessibilityLabel = [NSString stringWithFormat:@"%@: %@%@", name, state, detail.length ? [@", " stringByAppendingString:detail] : @""];
+  row.measure = ^CGFloat(CGFloat width) { return sub ? 58 : 48; };
+  row.layout = ^(UIView *view) {
+    CGFloat w = view.bounds.size.width, h = view.bounds.size.height;
+    CGFloat valueWidth = MIN(w * .45, ceil([value sizeThatFits:CGSizeZero].width));
+    value.frame = CGRectMake(w - valueWidth, (h - 20) / 2, valueWidth, 20);
+    CGFloat textWidth = w - 22 - valueWidth - 10;
+    if(sub) { title.frame = CGRectMake(22, h / 2 - 22, textWidth, 24); sub.frame = CGRectMake(22, h / 2 + 3, textWidth, 16); }
+    else { title.frame = CGRectMake(22, (h - 24) / 2, textWidth, 24); }
+    dot.center = CGPointMake(5, CGRectGetMidY(title.frame));
+    rule.frame = CGRectMake(0, h - 1, w, 1);
+  };
+  return row;
+}
+
+// Side-by-side columns; each holds a vertical stack of cards.
+- (GRBlockView *)columns:(NSArray<NSArray<UIView *> *> *)columns gap:(CGFloat)gap {
+  GRBlockView *block = [GRBlockView new];
+  for(NSArray *column in columns) { for(UIView *view in column) { [block addSubview:view]; } }
+  CGFloat (^place)(CGFloat, BOOL) = ^CGFloat(CGFloat width, BOOL apply) {
+    CGFloat columnWidth = floor((width - gap * (columns.count - 1)) / MAX(1, columns.count)), tallest = 0;
+    for(NSUInteger c = 0; c < columns.count; c++) {
+      CGFloat y = 0;
+      for(UIView *view in columns[c]) {
+        CGFloat h = [(GRFlowView *)view heightForWidth:columnWidth];
+        if(apply) { view.frame = CGRectMake(c * (columnWidth + gap), y, columnWidth, h); [view setNeedsLayout]; }
+        y += h + gap;
+      }
+      tallest = MAX(tallest, y - gap);
+    }
+    return MAX(0, tallest);
+  };
+  block.measure = ^CGFloat(CGFloat width) { return place(width, NO); };
+  block.layout = ^(UIView *view) { place(view.bounds.size.width, YES); };
+  return block;
+}
+
+static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes) {
+  NSString *name = GRStr(entity[@"name"]) ?: GRStr(entity[@"entity_id"]) ?: @"";
+  for(NSString *suffix in suffixes) {
+    if(name.length > suffix.length && [name.lowercaseString hasSuffix:suffix]) { name = [name substringToIndex:name.length - suffix.length]; }
+  }
+  return [name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+}
+
+- (void)renderSecurity {
+  GRTheme *t = [GRTheme current];
+  BOOL connected = self.model.connected, landscape = [self landscape];
+  NSDate *now = [NSDate date];
+  NSDictionary *groups = [GRLogic securityGroups:self.model.entities];
+  __weak GRMainViewController *weakSelf = self;
+
+  NSUInteger open = 0;
+  for(NSDictionary *entity in groups[@"openings"]) { if([entity[@"status"] isEqual:@"ok"] && [entity[@"state"] isEqual:@"on"]) { open++; } }
+  NSArray *openings = groups[@"openings"];
+  UILabel *title = GRLabel(nil, GRFont(40, UIFontWeightThin), t.highlight);
+  title.attributedText = GRKerned(@"Seguretat", title.font, t.highlight, -1);
+  title.accessibilityTraits = UIAccessibilityTraitHeader;
+  NSString *summary = !connected ? @"Pendent de connexió" : (!openings.count ? @"" : (open ? (open == 1 ? @"1 porta o finestra oberta" : [NSString stringWithFormat:@"%lu portes o finestres obertes", (unsigned long)open]) : @"Tot tancat"));
+  UILabel *badge = GRLabel(summary, GRFont(15, UIFontWeightMedium), open ? t.issue : t.accent);
+  badge.textAlignment = NSTextAlignmentCenter;
+  badge.layer.cornerRadius = 18; badge.layer.borderWidth = summary.length ? 1 : 0; badge.layer.borderColor = (open ? t.issue : t.edge).CGColor;
+  GRBlockView *header = [GRBlockView new];
+  [header addSubview:title]; [header addSubview:badge];
+  header.measure = ^CGFloat(CGFloat width) { return 52; };
+  header.layout = ^(UIView *view) {
+    CGFloat w = view.bounds.size.width, bw = summary.length ? ceil([badge sizeThatFits:CGSizeZero].width) + 32 : 0;
+    badge.frame = CGRectMake(w - bw, 8, bw, 36);
+    title.frame = CGRectMake(0, 0, w - bw - 12, 52);
+  };
+  [_viewFlow addView:header top:0];
+
+  // Alarm
+  NSDictionary *alarm = [groups[@"alarm"] firstObject];
+  GRFlowView *alarmCard = [self card:@"ALARMA" note:alarm ? GRShortName(alarm, @[]) : @""];
+  if(alarm) {
+    NSString *state = GRStr(alarm[@"state"]) ?: @"";
+    BOOL ok = [alarm[@"status"] isEqual:@"ok"] && connected;
+    BOOL armed = ok && ([state hasPrefix:@"armed"] || [state isEqualToString:@"arming"] || [state isEqualToString:@"pending"]);
+    BOOL alert = ok && [state isEqualToString:@"triggered"];
+    UILabel *big = GRLabel([GRLogic stateTextForEntity:alarm connected:connected demo:self.model.demo], GRFont(46, UIFontWeightThin),
+                           alert || !ok ? t.issue : (armed ? t.highlight : t.text));
+    big.adjustsFontSizeToFitWidth = YES; big.minimumScaleFactor = .5;
+    [alarmCard addView:big top:12 height:56];
+    NSString *since = [GRLogic agoText:GRStr(alarm[@"changed"]) now:now];
+    if(since && ok) { [alarmCard addView:GRLabel([@"Des de " stringByAppendingString:since], GRFont(14, UIFontWeightRegular), t.muted) top:0]; }
+    NSMutableArray *arm = [NSMutableArray array];
+    NSDictionary *disarm = nil;
+    NSMutableOrderedSet *reasons = [NSMutableOrderedSet orderedSet];
+    for(id item in GRArray(alarm[@"controls"]) ?: @[]) {
+      NSDictionary *control = GRDict(item);
+      if(![control[@"kind"] isEqual:@"alarm"]) { continue; }
+      if([control[@"action"] isEqual:@"alarm_disarm"]) { disarm = control; } else { [arm addObject:control]; }
+      if(![control[@"enabled"] isEqual:@YES] && GRStr(control[@"reason"]).length) { [reasons addObject:control[@"reason"]]; }
+    }
+    BOOL canCommand = connected && !self.model.preview && !self.model.busy;
+    GRButton *(^button)(NSDictionary *, GRButtonStyle) = ^GRButton *(NSDictionary *control, GRButtonStyle style) {
+      GRButton *b = [GRButton buttonWithTitle:GRStr(control[@"label"]) style:style handler:^(GRButton *sender) { [weakSelf alarmPrompt:alarm control:control]; }];
+      b.enabled = canCommand && [control[@"enabled"] isEqual:@YES];
+      return b;
+    };
+    NSMutableArray *buttons = [NSMutableArray array];
+    if(disarm && (armed || alert)) { [buttons addObject:button(disarm, GRButtonStylePrimary)]; }
+    if(!armed && !alert) { for(NSDictionary *control in arm) { [buttons addObject:button(control, GRButtonStyleOutline)]; } }
+    if(buttons.count) {
+      GRBlockView *grid = [GRBlockView new];
+      for(UIView *b in buttons) { [grid addSubview:b]; }
+      NSUInteger perRow = buttons.count == 1 ? 1 : 2;
+      grid.measure = ^CGFloat(CGFloat width) { return ((buttons.count + perRow - 1) / perRow) * 64 - 10; };
+      grid.layout = ^(UIView *view) {
+        CGFloat w = floor((view.bounds.size.width - 10 * (perRow - 1)) / perRow);
+        for(NSUInteger i = 0; i < buttons.count; i++) { [buttons[i] setFrame:CGRectMake((i % perRow) * (w + 10), (i / perRow) * 64, w, 54)]; }
+      };
+      [alarmCard addView:grid top:18];
+    } else if(ok) {
+      [alarmCard addView:[self note:@"Cap ordre verificada per a l’estat actual. Revisa verified_actions i alarm_modes."] top:14];
+    }
+    for(NSString *reason in reasons) { [alarmCard addView:[self note:reason] top:8]; }
+  } else {
+    [alarmCard addView:[self note:@"Afegeix l’alarma (alarm_control_panel) a entity_ids per veure-la i armar-la des d’aquí."] top:12];
+  }
+
+  // Camera and detections
+  NSArray *cameras = groups[@"cameras"];
+  BOOL knownCamera = NO;
+  for(NSDictionary *camera in cameras) { if([camera[@"entity_id"] isEqual:_cameraEntity]) { knownCamera = YES; } }
+  if(!knownCamera) { _cameraEntity = [cameras.firstObject objectForKey:@"entity_id"]; }
+  GRFlowView *cameraCard = nil;
+  if(cameras.count || [groups[@"detections"] count]) {
+    NSDictionary *camera = nil;
+    for(NSDictionary *item in cameras) { if([item[@"entity_id"] isEqual:_cameraEntity]) { camera = item; } }
+    cameraCard = [self card:cameras.count ? @"CÀMERA" : @"DETECCIÓ" note:camera ? GRShortName(camera, @[@" mainstream"]) : @""];
+    if(camera) {
+      UIImageView *image = [[UIImageView alloc] initWithImage:_cameraImages[_cameraEntity]];
+      image.contentMode = UIViewContentModeScaleAspectFill; image.clipsToBounds = YES;
+      image.backgroundColor = t.line; image.layer.cornerRadius = 14;
+      image.userInteractionEnabled = YES;
+      image.isAccessibilityElement = YES; image.accessibilityTraits = UIAccessibilityTraitButton | UIAccessibilityTraitImage;
+      image.accessibilityLabel = [@"Imatge de la càmera; toca per ampliar-la. " stringByAppendingString:GRShortName(camera, @[@" mainstream"])];
+      [image addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(zoomCamera)]];
+      UILabel *live = GRLabel(nil, GRFont(11, UIFontWeightSemibold), [UIColor whiteColor]);
+      live.tag = 31; live.textAlignment = NSTextAlignmentCenter;
+      live.backgroundColor = GRHexA(0x000000, .55); live.layer.cornerRadius = 10; live.clipsToBounds = YES;
+      [image addSubview:live];
+      [self updateCameraBadge:live];
+      [_cameraViews setObject:image forKey:_cameraEntity];
+      GRBlockView *frame = [GRBlockView new];
+      [frame addSubview:image];
+      frame.measure = ^CGFloat(CGFloat width) { return floor(width * 9 / 16); };
+      frame.layout = ^(UIView *view) {
+        image.frame = view.bounds;
+        CGFloat lw = ceil([live sizeThatFits:CGSizeZero].width) + 20;
+        live.frame = CGRectMake(10, view.bounds.size.height - 30, lw, 20);
+      };
+      [cameraCard addView:frame top:14];
+      if(cameras.count > 1) {
+        GRWrapView *choices = [GRWrapView new];
+        choices.horizontalSpacing = 8;
+        for(NSDictionary *item in cameras) {
+          NSString *entityId = item[@"entity_id"];
+          GRButton *choice = [GRButton buttonWithTitle:GRShortName(item, @[@" mainstream"]) style:GRButtonStylePeriod handler:^(GRButton *b) {
+            GRMainViewController *strongSelf = weakSelf;
+            if(!strongSelf) { return; }
+            strongSelf->_cameraEntity = entityId; [strongSelf renderView];
+          }];
+          choice.selectedLook = [entityId isEqualToString:_cameraEntity];
+          [choices addSubview:choice];
+        }
+        [cameraCard addView:choices top:10];
+      }
+    }
+    for(NSDictionary *detection in groups[@"detections"]) {
+      BOOL ok = [detection[@"status"] isEqual:@"ok"] && connected;
+      BOOL on = ok && [detection[@"state"] isEqual:@"on"];
+      NSString *ago = [GRLogic agoText:GRStr(detection[@"changed"]) now:now];
+      NSString *name = GRShortName(detection, @[]);
+      NSString *lower = GRStr(detection[@"entity_id"]) ?: @"";
+      if([lower rangeOfString:@"person"].location != NSNotFound) { name = @"Persona detectada"; }
+      else if([lower rangeOfString:@"motion_alarm"].location != NSNotFound) { name = @"Alarma de moviment"; }
+      else if([lower rangeOfString:@"motion"].location != NSNotFound) { name = @"Moviment"; }
+      NSString *detail = ok && ago ? [NSString stringWithFormat:@"%@ %@", on ? @"Des de" : @"Últim canvi", ago] : nil;
+      [cameraCard addView:[self statusRow:name detail:detail state:ok ? (on ? @"Detectat" : @"Res") : [GRLogic stateTextForEntity:detection connected:connected demo:NO]
+                                       lit:on issue:!ok] top:cameraCard.subviews.count > 2 ? 0 : 10];
+    }
+  }
+
+  // Doors and windows
+  GRFlowView *openingsCard = nil;
+  if(openings.count) {
+    openingsCard = [self card:@"PORTES I FINESTRES" note:connected ? (open ? [NSString stringWithFormat:@"%lu %@", (unsigned long)open, open == 1 ? @"oberta" : @"obertes"] : @"Tot tancat") : @""];
+    BOOL first = YES;
+    for(NSDictionary *entity in openings) {
+      BOOL ok = [entity[@"status"] isEqual:@"ok"] && connected;
+      BOOL isOpen = ok && [entity[@"state"] isEqual:@"on"];
+      NSString *dc = GRStr(GRDict(entity[@"attributes"])[@"device_class"]) ?: @"";
+      BOOL window = [dc isEqualToString:@"window"] || [GRStr(entity[@"entity_id"]) rangeOfString:@"finestra"].location != NSNotFound;
+      NSString *state = !ok ? [GRLogic stateTextForEntity:entity connected:connected demo:NO] : (isOpen ? (window ? @"Oberta" : @"Oberta") : @"Tancada");
+      NSString *ago = ok ? [GRLogic agoText:GRStr(entity[@"changed"]) now:now] : nil;
+      [openingsCard addView:[self statusRow:GRShortName(entity, @[]) detail:ago ? [@"Des de " stringByAppendingString:ago] : nil state:state lit:NO issue:isOpen || !ok] top:first ? 10 : 0];
+      first = NO;
+    }
+  }
+
+  // Sirens: state, external power and a stop button (never a start button).
+  GRFlowView *sirenCard = nil;
+  if([groups[@"sirens"] count] || [groups[@"sirenPower"] count]) {
+    BOOL sounding = NO;
+    NSMutableArray *stops = [NSMutableArray array];
+    for(NSDictionary *siren in groups[@"sirens"]) {
+      if([siren[@"status"] isEqual:@"ok"] && [siren[@"state"] isEqual:@"on"] && connected) {
+        sounding = YES;
+        for(id item in GRArray(siren[@"controls"]) ?: @[]) {
+          if([GRDict(item)[@"action"] isEqual:@"turn_off"]) { [stops addObject:@[siren, item]]; }
+        }
+      }
+    }
+    sirenCard = [self card:@"SIRENA" note:connected ? (sounding ? @"Sonant" : @"En silenci") : @""];
+    BOOL first = YES;
+    for(NSDictionary *siren in groups[@"sirens"]) {
+      BOOL ok = [siren[@"status"] isEqual:@"ok"] && connected, on = ok && [siren[@"state"] isEqual:@"on"];
+      NSString *ago = ok ? [GRLogic agoText:GRStr(siren[@"changed"]) now:now] : nil;
+      [sirenCard addView:[self statusRow:GRShortName(siren, @[@" siren on"]) detail:ago ? [@"Des de " stringByAppendingString:ago] : nil
+                                   state:ok ? (on ? @"Sona" : @"En silenci") : [GRLogic stateTextForEntity:siren connected:connected demo:NO] lit:NO issue:on || !ok] top:first ? 10 : 0];
+      first = NO;
+    }
+    for(NSDictionary *power in groups[@"sirenPower"]) {
+      BOOL ok = [power[@"status"] isEqual:@"ok"] && connected, on = ok && [power[@"state"] isEqual:@"on"];
+      [sirenCard addView:[self statusRow:@"Alimentació externa" detail:GRShortName(power, @[@" external power"])
+                                   state:ok ? (on ? @"Connectada" : @"Sense corrent") : [GRLogic stateTextForEntity:power connected:connected demo:NO] lit:NO issue:!on] top:first ? 10 : 0];
+      first = NO;
+    }
+    BOOL canCommand = connected && !self.model.preview && !self.model.busy;
+    GRButton *stop = [GRButton buttonWithTitle:@"Atura la sirena" style:sounding ? GRButtonStylePrimary : GRButtonStyleOutline handler:^(GRButton *b) {
+      for(NSArray *pair in stops) { [weakSelf.model sendAction:pair[0] control:pair[1] value:nil code:nil completion:^(NSString *error) {}]; }
+    }];
+    BOOL stoppable = NO;
+    for(NSArray *pair in stops) { if([pair[1][@"enabled"] isEqual:@YES]) { stoppable = YES; } }
+    stop.enabled = canCommand && stoppable;
+    [sirenCard addView:stop top:16];
+    if(sounding && !stoppable) { [sirenCard addView:[self note:@"Cal verificar turn_off de la sirena a verified_actions per poder-la aturar."] top:8]; }
+    else if(!sounding) { [sirenCard addView:[self note:@"Des del panell només es pot aturar; no es pot fer sonar."] top:8]; }
+  }
+
+  // People at home
+  GRFlowView *peopleCard = nil;
+  NSArray *people = groups[@"people"];
+  if(people.count) {
+    NSUInteger home = 0;
+    for(NSDictionary *person in people) { if([person[@"status"] isEqual:@"ok"] && [person[@"state"] isEqual:@"home"]) { home++; } }
+    peopleCard = [self card:@"QUI ÉS A CASA" note:connected ? [NSString stringWithFormat:@"%lu de %lu", (unsigned long)home, (unsigned long)people.count] : @""];
+    BOOL first = YES;
+    for(NSDictionary *person in people) {
+      BOOL ok = [person[@"status"] isEqual:@"ok"] && connected, atHome = ok && [person[@"state"] isEqual:@"home"];
+      NSString *ago = ok ? [GRLogic agoText:GRStr(person[@"changed"]) now:now] : nil;
+      [peopleCard addView:[self statusRow:GRShortName(person, @[]) detail:ago ? [@"Des de " stringByAppendingString:ago] : nil
+                                    state:[GRLogic presenceText:person connected:connected] lit:atHome issue:NO] top:first ? 10 : 0];
+      first = NO;
+    }
+  }
+
+  // Batteries: lowest first, warning below 20 %.
+  GRFlowView *batteryCard = nil;
+  NSMutableArray *batteries = [NSMutableArray array];
+  for(NSDictionary *battery in groups[@"batteries"]) {
+    NSNumber *value = [GRLogic numericState:battery connected:connected];
+    [batteries addObject:@[battery, value ?: @(-1)]];
+  }
+  [batteries sortUsingComparator:^NSComparisonResult(NSArray *a, NSArray *b) { return [a[1] compare:b[1]]; }];
+  if(batteries.count) {
+    NSUInteger low = 0;
+    for(NSArray *pair in batteries) { if([pair[1] doubleValue] >= 0 && [pair[1] doubleValue] < 20) { low++; } }
+    batteryCard = [self card:@"BATERIES" note:low ? [NSString stringWithFormat:@"%lu %@", (unsigned long)low, low == 1 ? @"baixa" : @"baixes"] : (connected ? @"Totes bé" : @"")];
+    NSMutableArray *tiles = [NSMutableArray array];
+    for(NSArray *pair in batteries) {
+      double value = [pair[1] doubleValue];
+      BOOL known = value >= 0, weak = known && value < 20;
+      UILabel *name = GRLabel(GRShortName(pair[0], @[@" battery", @" bateria"]), GRFont(14, UIFontWeightRegular), t.text);
+      name.adjustsFontSizeToFitWidth = YES; name.minimumScaleFactor = .75;
+      UILabel *percent = GRLabel(known ? [NSString stringWithFormat:@"%ld %%", GRRound(value)] : @"—", GRDigits(22, UIFontWeightLight), weak ? t.issue : t.highlight);
+      UIView *track = [UIView new]; track.backgroundColor = t.line; track.layer.cornerRadius = 3;
+      UIView *fill = [UIView new]; fill.backgroundColor = weak ? t.issue : t.accent; fill.layer.cornerRadius = 3;
+      GRBlockView *tile = [GRBlockView new];
+      for(UIView *view in @[name, percent, track, fill]) { [tile addSubview:view]; }
+      tile.isAccessibilityElement = YES;
+      tile.accessibilityLabel = [NSString stringWithFormat:@"Bateria de %@: %@%@", name.text, percent.text, weak ? @", baixa" : @""];
+      tile.layout = ^(UIView *view) {
+        CGFloat w = view.bounds.size.width;
+        name.frame = CGRectMake(0, 0, w, 18);
+        percent.frame = CGRectMake(0, 20, w, 28);
+        track.frame = CGRectMake(0, 54, w, 6);
+        fill.frame = CGRectMake(0, 54, known ? w * MIN(1, value / 100) : 0, 6);
+      };
+      [tiles addObject:tile];
+    }
+    NSInteger perRow = landscape ? 4 : 3;
+    GRBlockView *grid = [GRBlockView new];
+    for(UIView *tile in tiles) { [grid addSubview:tile]; }
+    NSUInteger rows = (tiles.count + perRow - 1) / perRow;
+    grid.measure = ^CGFloat(CGFloat width) { return rows * 60 + (rows - 1) * 18; };
+    grid.layout = ^(UIView *view) {
+      CGFloat w = floor((view.bounds.size.width - 22 * (perRow - 1)) / perRow);
+      for(NSUInteger i = 0; i < tiles.count; i++) {
+        [tiles[i] setFrame:CGRectMake((i % perRow) * (w + 22), (i / perRow) * 78, w, 60)];
+        [tiles[i] setNeedsLayout];
+      }
+    };
+    [batteryCard addView:grid top:16];
+  }
+
+  // Arrangement: alarm and camera on top, then the lists, then batteries.
+  NSMutableArray *top = [NSMutableArray array], *middle = [NSMutableArray array];
+  [top addObject:@[alarmCard]];
+  if(cameraCard) { [top addObject:@[cameraCard]]; }
+  for(GRFlowView *card in @[openingsCard ?: [NSNull null], sirenCard ?: [NSNull null], peopleCard ?: [NSNull null]]) {
+    if([card isKindOfClass:[GRFlowView class]]) { [middle addObject:@[card]]; }
+  }
+  if(landscape) {
+    [_viewFlow addView:[self columns:top gap:16] top:16];
+    if(middle.count) { [_viewFlow addView:[self columns:middle gap:16] top:16]; }
+  } else {
+    for(NSArray *column in top) { [_viewFlow addView:column.firstObject top:16]; }
+    if(middle.count == 3) {
+      [_viewFlow addView:middle[0][0] top:16];
+      [_viewFlow addView:[self columns:@[middle[1], middle[2]] gap:16] top:16];
+    } else if(middle.count) { [_viewFlow addView:[self columns:middle gap:16] top:16]; }
+  }
+  if(batteryCard) { [_viewFlow addView:batteryCard top:16]; }
+  if(!alarm && !cameras.count && !openings.count && !people.count && !batteries.count && ![groups[@"sirens"] count]) {
+    [_viewFlow addView:[self note:@"Afegeix a entity_ids l’alarma, els sensors de portes i finestres, la càmera, la sirena, les persones i les bateries que vulguis veure aquí."] top:16];
+  }
+}
+
+#pragma mark Camera refresh
+
+- (void)updateCameraBadge:(UILabel *)badge {
+  badge.text = _cameraImages[_cameraEntity ?: @""] ? (_cameraFailed ? @"SENSE SENYAL" : @"●  EN DIRECTE") : (_cameraFailed ? @"SENSE IMATGE" : @"CARREGANT…");
+}
+
+- (void)updateCameraRefresh {
+  BOOL wanted = [_currentView isEqualToString:@"security"] && _cameraEntity && self.model.connected
+    && [UIApplication sharedApplication].applicationState != UIApplicationStateBackground;
+  if(!wanted) { [self stopCameraRefresh]; return; }
+  if(!_cameraTask && !_cameraTimer) { [self fetchCamera]; }
+}
+
+- (void)stopCameraRefresh {
+  [_cameraTimer cancel]; _cameraTimer = nil;
+  [_cameraTask cancel]; _cameraTask = nil;
+}
+
+// One image at a time, the next one 2.5 s after the previous answer, so a slow camera never queues requests.
+- (void)fetchCamera {
+  _cameraTimer = nil;
+  NSString *entityId = _cameraEntity;
+  if(!entityId || !self.model.client) { return; }
+  NSString *path = [@"/api/camera?entity_id=" stringByAppendingString:[entityId stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]]];
+  __weak GRMainViewController *weakSelf = self;
+  _cameraTask = [self.model.client GETData:path timeout:10 completion:^(NSString *error, NSData *data, NSInteger status) {
+    GRMainViewController *strongSelf = weakSelf;
+    if(!strongSelf) { return; }
+    strongSelf->_cameraTask = nil;
+    UIImage *image = data ? [UIImage imageWithData:data] : nil;
+    strongSelf->_cameraFailed = image == nil;
+    if(image) { strongSelf->_cameraImages[entityId] = image; }
+    UIImageView *view = [strongSelf->_cameraViews objectForKey:entityId];
+    if(image) { view.image = image; }
+    [strongSelf updateCameraBadge:(UILabel *)[view viewWithTag:31]];
+    UIImageView *zoomed = (UIImageView *)[strongSelf->_cameraZoom viewWithTag:32];
+    if(image && zoomed) { zoomed.image = image; }
+    if([strongSelf->_currentView isEqualToString:@"security"] && [entityId isEqualToString:strongSelf->_cameraEntity]
+       && [UIApplication sharedApplication].applicationState != UIApplicationStateBackground) {
+      strongSelf->_cameraTimer = [GRTimer after:status == 429 ? 10 : 2.5 block:^{ [weakSelf fetchCamera]; }];
+    } else { [strongSelf updateCameraRefresh]; }
+  }];
+}
+
+- (void)zoomCamera {
+  if(_cameraZoom) { return; }
+  _cameraZoom = [[UIControl alloc] initWithFrame:self.view.bounds];
+  _cameraZoom.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+  _cameraZoom.backgroundColor = [UIColor blackColor];
+  _cameraZoom.isAccessibilityElement = YES;
+  _cameraZoom.accessibilityLabel = @"Imatge de la càmera ampliada; toca per tancar-la";
+  UIImageView *image = [[UIImageView alloc] initWithFrame:_cameraZoom.bounds];
+  image.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+  image.contentMode = UIViewContentModeScaleAspectFit; image.tag = 32;
+  image.image = _cameraImages[_cameraEntity ?: @""];
+  image.userInteractionEnabled = NO;
+  [_cameraZoom addSubview:image];
+  [_cameraZoom addTarget:self action:@selector(closeCameraZoom) forControlEvents:UIControlEventTouchUpInside];
+  _cameraZoom.alpha = 0;
+  [self.view addSubview:_cameraZoom];
+  [UIView animateWithDuration:.2 animations:^{ self->_cameraZoom.alpha = 1; }];
+}
+
+- (void)closeCameraZoom {
+  UIView *zoom = _cameraZoom;
+  _cameraZoom = nil;
+  [UIView animateWithDuration:.2 animations:^{ zoom.alpha = 0; } completion:^(BOOL finished) { [zoom removeFromSuperview]; }];
+}
+
 #pragma mark - Side drawer
 
 - (void)layoutModal {
@@ -990,7 +1444,7 @@ static UIView *GRDot(BOOL lit) {
   else if([type isEqualToString:@"room"]) { [self openRoom:_modal[@"id"]]; }
   else if([type isEqualToString:@"settings"]) { [self openSettings]; }
   else if([type isEqualToString:@"audit"]) { [self showAudit]; }
-  else if([type isEqualToString:@"alarm"]) { [self openCategory:@"security" title:@"Seguretat"]; return; }
+  else if([type isEqualToString:@"alarm"]) { [self closeModal]; return; }
   [self layoutModal];
   CGFloat maxY = MAX(0, _modalScroll.contentSize.height - _modalScroll.bounds.size.height + _modalScroll.contentInset.bottom);
   _modalScroll.contentOffset = CGPointMake(0, MIN(offset.y, maxY));
@@ -1004,7 +1458,7 @@ static UIView *GRDot(BOOL lit) {
   if(!_modal || self.model.busy) { return; }
   NSString *type = _modal[@"type"];
   if([self isEditingModal] && self.model.connected) { return; }
-  if([type isEqualToString:@"alarm"]) { if(!self.model.connected) { [self openCategory:@"security" title:@"Seguretat"]; } return; }
+  if([type isEqualToString:@"alarm"]) { if(!self.model.connected) { [self closeModal]; } return; }
   if([type isEqualToString:@"settings"] && [self isEditingModal]) { return; }
   if([type isEqualToString:@"audit"]) { return; }
   [self rebuildModal];
@@ -1271,7 +1725,7 @@ static BOOL GRIsActiveState(NSString *domain, NSString *state) {
   __weak GRMainViewController *weakSelf = self;
   [self.model sendAction:entity control:control value:value code:code completion:^(NSString *error) {
     GRMainViewController *strongSelf = weakSelf;
-    if(strongSelf && [strongSelf->_modal[@"type"] isEqualToString:@"alarm"]) { [strongSelf openCategory:@"security" title:@"Seguretat"]; }
+    if(strongSelf && [strongSelf->_modal[@"type"] isEqualToString:@"alarm"]) { [strongSelf closeModal]; }
   }];
 }
 

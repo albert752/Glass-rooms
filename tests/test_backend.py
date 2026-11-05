@@ -75,6 +75,10 @@ class FakeHA:
         self.history_requests.append((list(entity_ids), hours))
         return copy.deepcopy(self.history_rows)
 
+    def camera_image(self, entity_id):
+        self.camera_requests = getattr(self, "camera_requests", []) + [entity_id]
+        return b"\xff\xd8fake-jpeg", "image/jpeg"
+
 
 class ConfigurationTests(unittest.TestCase):
     def test_defaults_refuse_to_start(self):
@@ -455,6 +459,36 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(self.call(path)[0], 401)
         self.assertEqual(self.call("/api/session")[1], {"authenticated": False, "preview": False})
         self.assertEqual(self.fake.reads, 0)
+
+    def test_security_entities_camera_and_siren(self):
+        camera, siren, person, door = "camera.test_cam", "siren.test_siren", "person.test_person", "binary_sensor.test_door"
+        self.app.settings = Settings(config(entity_ids=[camera, siren, person, door],
+                                            verified_actions=[siren + ":turn_off", siren + ":turn_on"]))
+        self.app.settings.allowed_hosts = {self.host}
+        self.fake.states = {
+            **raw(camera, "idle", entity_picture="/api/camera_proxy/camera.test_cam?token=secret", access_token="secret"),
+            **raw(siren, "on"), **raw(person, "home"), **raw(door, "on", device_class="door"),
+        }
+        self.fake.states[door]["last_changed"] = "2026-11-05T21:00:00+00:00"
+        self.fake.available = services("siren", turn_on=["tone", "duration"], turn_off=[])
+        self.assertEqual(self.call("/api/camera?entity_id=" + camera)[0], 401)
+        self.login()
+        status, state, _ = self.call("/api/state")
+        self.assertEqual(status, 200)
+        found = {item["entity_id"]: item for item in state["entities"]}
+        self.assertEqual({found[e]["category"] for e in (camera, siren, person, door)}, {"security"})
+        # Camera tokens and picture URLs never reach the client; only /api/camera serves images.
+        self.assertNotIn("secret", json.dumps(found[camera]))
+        self.assertEqual(found[door]["changed"], "2026-11-05T21:00:00+00:00")
+        # A siren can be silenced from the panel but never switched on, even if turn_on is verified.
+        self.assertEqual([control["action"] for control in found[siren]["controls"]], ["turn_off"])
+        status, image, headers = self.call("/api/camera?entity_id=" + camera)
+        self.assertEqual((status, image, headers["Content-Type"]), (200, b"\xff\xd8fake-jpeg", "image/jpeg"))
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        for path in ["/api/camera?entity_id=" + door, "/api/camera?entity_id=camera.not_configured", "/api/camera"]:
+            with self.subTest(path=path):
+                self.assertEqual(self.call(path)[0], 404)
+        self.assertEqual(self.fake.camera_requests, [camera])
 
     def test_climate_history_is_authenticated_filtered_and_numeric(self):
         temperature = "sensor.test_temperature"

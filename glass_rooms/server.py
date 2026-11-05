@@ -56,6 +56,8 @@ ACTION_NAMES = {
     "water_heater": {"set_operation_mode"},
     "fan": {"turn_on", "turn_off", "set_percentage"},
     "media_player": {"turn_on", "turn_off", "media_play", "media_pause", "volume_set"},
+    # The panel can only silence a siren; turn_on is listed so a verified entry never exposes it.
+    "siren": {"turn_on", "turn_off"},
 }
 ATTRS = {
     "light": {"supported_features", "supported_color_modes", "brightness", "color_mode", "friendly_name",
@@ -71,6 +73,11 @@ ATTRS = {
                      "operation_mode", "operation_list"},
     "fan": {"supported_features", "percentage", "percentage_step", "friendly_name"},
     "media_player": {"supported_features", "volume_level", "is_volume_muted", "media_title", "media_artist", "friendly_name"},
+    # Cameras never expose entity_picture or access_token: images go through /api/camera only.
+    "camera": {"friendly_name"},
+    "siren": {"friendly_name"},
+    "person": {"friendly_name"},
+    "device_tracker": {"friendly_name", "source_type"},
 }
 PRIVATE_NETS = [ipaddress.ip_network(value) for value in (
     "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "fc00::/7", "::1/128")]
@@ -320,6 +327,23 @@ class HAClient:
     def call(self, domain, service, payload):
         self._request("/services/" + domain + "/" + service, payload)
 
+    def camera_image(self, entity_id):
+        """Current still image of a configured camera, as (bytes, content type)."""
+        req = request.Request(UPSTREAM + "/camera_proxy/" + parse.quote(entity_id, safe="._"), headers={
+            "Authorization": "Bearer " + self._token, "Accept": "image/jpeg, image/png"})
+        try:
+            with self._opener.open(req, timeout=8) as response:
+                kind = response.headers.get_content_type()
+                raw = response.read(3 * 1024 * 1024 + 1)
+        except error.HTTPError as exc:
+            exc.close()
+            raise PublicError("La càmera no ha retornat cap imatge.", 502) from None
+        except (error.URLError, TimeoutError, OSError, ValueError):
+            raise PublicError("No hi ha connexió amb Home Assistant.", 502) from None
+        if kind not in {"image/jpeg", "image/png"} or not raw or len(raw) > 3 * 1024 * 1024:
+            raise PublicError("La imatge de la càmera no té un format admès.", 502)
+        return raw, kind
+
     def history(self, entity_ids, hours):
         end = datetime.datetime.now(datetime.timezone.utc)
         start = end - datetime.timedelta(hours=hours)
@@ -472,6 +496,8 @@ def controls_for(item, state, attrs, services, settings):
         add("turn_off", "Desactivar")
     elif domain == "scene":
         add("turn_on", "Activar escena")
+    elif domain == "siren" and state in {"on", "off"}:
+        add("turn_off", "Atura la sirena")
     elif domain == "alarm_control_panel":
         if state not in {"disarmed", "armed_home", "armed_away", "armed_night", "armed_vacation",
                          "armed_custom_bypass", "pending", "arming", "disarming", "triggered"}:
@@ -549,6 +575,9 @@ def entities_for(states, services, settings, connected):
                 entity["state"] = value if short_string(value, 256) else None
                 entity["status"] = value if value in ("unavailable", "unknown") else ("ok" if entity["state"] is not None else "unknown")
                 entity["attributes"] = filtered_attributes(item["domain"], raw.get("attributes"))
+                changed = raw.get("last_changed")
+                if short_string(changed, 64):
+                    entity["changed"] = changed
                 if item["domain"] == "sensor" and entity["attributes"].get("device_class") in {"temperature", "humidity"}:
                     entity["category"] = "climate"
                 friendly_name = entity["attributes"].get("friendly_name")
@@ -1045,6 +1074,20 @@ class Handler(BaseHTTPRequestHandler):
                 raise PublicError("El període de l'historial no és vàlid.")
             self.app.rate_limit(self.client_address[0], "history", 12, 60)
             self.reply(self.app.climate_history(int(query["hours"][0])))
+            return
+        if path == "/api/camera":
+            if not self.app.settings.preview:
+                self.session()
+            query = parse.parse_qs(parsed_path.query, keep_blank_values=True)
+            entity_id = query.get("entity_id", [""])[0] if set(query) == {"entity_id"} and len(query["entity_id"]) == 1 else ""
+            item = self.app.settings.by_id.get(entity_id)
+            if not item or item["domain"] != "camera":
+                raise PublicError("Càmera no configurada.", 404)
+            if self.app.settings.preview:
+                raise PublicError("La previsualització no mostra càmeres.", 404)
+            self.app.rate_limit(self.client_address[0], "camera", 120, 60)
+            image, kind = self.app.client.camera_image(entity_id)
+            self.reply(image, content_type=kind)
             return
         if path == "/api/updates":
             if not self.app.settings.preview:

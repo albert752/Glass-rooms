@@ -42,12 +42,66 @@ L'app parla només amb el servidor de Glass Rooms (port `8099` per defecte), mai
 - Actualitzacions en directe (`/api/updates`), lectura de seguretat cada 30 segons i relectures als 2, 5, 10, 20 i 30 segons després d'una ordre de llum. L'historial de clima es demana com a màxim cada 2 minuts, perquè la columna del rellotge en mostra la tendència a totes les vistes.
 - Informe de verificació (`/api/audit`).
 
+## Panell de seguretat (des de 1.1.10)
+
+El botó de l'escut obre una pàgina a pantalla completa:
+
+- **Alarma:** l'estat en gran i des de quan. Si està desarmada, hi ha els botons d'armar; si està armada, el de desarmar. Cada ordre passa pel calaix de confirmació i, si la política ho exigeix, demana el PIN de l'alarma.
+- **Càmera:**
+  - El servidor demana una captura a Home Assistant (`/api/camera`) i l'app la refresca cada 2,5 s, només mentre la pàgina és visible.
+  - Tocar la imatge l'amplia a pantalla completa. Si n'hi ha més d'una, uns botons permeten triar-la.
+  - A sota hi ha el moviment i la detecció de persones, amb l'hora de l'últim canvi.
+  - Les adreces internes i els tokens de la càmera mai arriben a l'app.
+- **Portes i finestres:** obertes en vermell, i des de quan.
+- **Sirena:** si sona i si té alimentació externa. Només es pot **aturar**; el servidor no ofereix mai l'ordre d'engegar-la.
+- **Qui és a casa:** les persones (`person.*`) i els dispositius (`device_tracker.*`), a casa o fora.
+- **Bateries:** dels sensors, de la més baixa a la més alta, amb avís per sota del 20 %.
+
+La pàgina mostra les entitats que hi ha a `entity_ids` i les classifica pel domini i per `device_class`. Les entitats `*_tamper` no hi surten. Exemple amb les entitats d'aquesta casa (opcions de Glass Rooms, en YAML):
+
+```yaml
+entity_ids:
+  - alarm_control_panel.alarmo
+  - camera.cam_pt2_mainstream
+  - binary_sensor.cam_pt2_cell_motion_detection
+  - binary_sensor.cam_pt2_person_detection
+  - binary_sensor.sensor_porta_00
+  - binary_sensor.living_room_sensor_porta_01
+  - binary_sensor.sensor_finestra_despatx
+  - binary_sensor.sensor_finestra_menjador
+  - siren.sonoff_snzb_09p
+  - switch.living_room_sirena_alarma_siren_on
+  - binary_sensor.living_room_sirena_alarma_external_power
+  - person.albert_azemar_i_rovira
+  - person.xazemar
+  - device_tracker.iphone_de_albert_2
+  - sensor.sensor_porta_00_battery
+  - sensor.living_room_sensor_porta_01_battery
+  - sensor.sensor_finestra_despatx_battery
+  - sensor.sensor_finestra_menjador_battery
+  - sensor.sonoff_snzb_09p_battery
+verified_actions:
+  - alarm_control_panel.alarmo:alarm_arm_home
+  - alarm_control_panel.alarmo:alarm_arm_away
+  - alarm_control_panel.alarmo:alarm_disarm
+  - siren.sonoff_snzb_09p:turn_off
+  - switch.living_room_sirena_alarma_siren_on:turn_off
+alarm_modes:
+  - alarm_arm_home
+  - alarm_arm_away
+alarm_arm_code: none        # o required, segons Alarmo
+alarm_disarm_code: required # o none, segons Alarmo
+```
+
+Conserva els llums i els sensors que ja tenies a `entity_ids`. Les ordres de l'alarma i de la sirena només s'activen després de provar-les a casa i afegir-les a `verified_actions`.
+
 ## Diferències deliberades
 
 | Web | App |
 |---|---|
 | Teclat numèric amb `panel_pin` i sessió de 12 hores | **Sense bloqueig amb codi.** El PIN del panell (`panel_pin`) s'introdueix una sola vegada a Ajustos, queda al clauer de l'iPad i l'app l'envia com a credencial. |
 | Cookie, CSRF i comprovació d'origen | Capçalera `Authorization: Bearer`; no hi ha credencial ambiental que un altre web pugui reutilitzar. |
+| Seguretat al calaix de categoria | Pàgina completa amb alarma, càmera, obertures, sirena, persones i bateries. |
 | `<select>` per als modes | Full d'opcions natiu. |
 | Botó «Aplica» als controls lliscants | El valor s'envia en deixar anar el control. |
 | Targetes il·lustrades | Llista d'estances amb interruptor; sense il·lustracions. |

@@ -163,6 +163,63 @@ static NSCalendar *GRCalendar(void) {
   return nil;
 }
 
++ (NSDictionary<NSString *, NSArray *> *)securityGroups:(NSArray *)entities {
+  NSMutableDictionary *groups = [NSMutableDictionary dictionary];
+  for(NSString *key in @[@"alarm", @"cameras", @"openings", @"detections", @"sirens", @"sirenPower", @"people", @"batteries"]) {
+    groups[key] = [NSMutableArray array];
+  }
+  BOOL (^has)(NSString *, NSArray *) = ^BOOL(NSString *text, NSArray *words) {
+    for(NSString *word in words) { if([text rangeOfString:word].location != NSNotFound) { return YES; } }
+    return NO;
+  };
+  for(id item in entities) {
+    NSDictionary *entity = GRDict(item);
+    if(!entity) { continue; }
+    NSString *domain = GRStr(entity[@"domain"]) ?: @"", *entityId = GRStr(entity[@"entity_id"]) ?: @"";
+    NSString *dc = GRStr(GRDict(entity[@"attributes"])[@"device_class"]) ?: @"";
+    BOOL siren = has(entityId, @[@"siren", @"sirena"]);
+    if([domain isEqualToString:@"alarm_control_panel"]) { [groups[@"alarm"] addObject:entity]; }
+    else if([domain isEqualToString:@"camera"]) { [groups[@"cameras"] addObject:entity]; }
+    else if([domain isEqualToString:@"person"] || [domain isEqualToString:@"device_tracker"]) { [groups[@"people"] addObject:entity]; }
+    else if([domain isEqualToString:@"siren"] || ([domain isEqualToString:@"switch"] && siren)) { [groups[@"sirens"] addObject:entity]; }
+    else if([domain isEqualToString:@"sensor"] && ([dc isEqualToString:@"battery"] || [entityId hasSuffix:@"_battery"])) { [groups[@"batteries"] addObject:entity]; }
+    else if([domain isEqualToString:@"binary_sensor"]) {
+      // Tamper contacts are left out of the page on purpose.
+      if([dc isEqualToString:@"tamper"] || [entityId hasSuffix:@"_tamper"]) { continue; }
+      if(siren && ([dc isEqualToString:@"power"] || [dc isEqualToString:@"plug"] || has(entityId, @[@"power"]))) { [groups[@"sirenPower"] addObject:entity]; }
+      else if([@[@"door", @"window", @"opening", @"garage_door"] containsObject:dc] || has(entityId, @[@"porta", @"finestra", @"door", @"window"])) {
+        [groups[@"openings"] addObject:entity];
+      } else if([@[@"motion", @"occupancy", @"presence", @"moving"] containsObject:dc] || has(entityId, @[@"motion", @"person_detection", @"moviment"])) {
+        [groups[@"detections"] addObject:entity];
+      }
+    }
+  }
+  return groups;
+}
+
++ (NSString *)agoText:(NSString *)isoTime now:(NSDate *)now {
+  NSDate *date = GRParseISODate(isoTime);
+  if(!date) { return nil; }
+  NSTimeInterval seconds = MAX(0, [now timeIntervalSinceDate:date]);
+  if(seconds < 60) { return @"ara"; }
+  if(seconds < 3600) { return [NSString stringWithFormat:@"fa %ld min", (long)(seconds / 60)]; }
+  if(seconds < 6 * 3600) { return [NSString stringWithFormat:@"fa %ld h", (long)(seconds / 3600)]; }
+  NSCalendar *calendar = GRCalendar();
+  NSDateComponents *c = [calendar components:NSCalendarUnitDay|NSCalendarUnitMonth|NSCalendarUnitHour|NSCalendarUnitMinute fromDate:date];
+  NSString *time = [NSString stringWithFormat:@"%@:%@", GRPad2(c.hour), GRPad2(c.minute)];
+  if([calendar isDate:date inSameDayAsDate:now]) { return [@"avui " stringByAppendingString:time]; }
+  if([calendar isDate:date inSameDayAsDate:[now dateByAddingTimeInterval:-86400]]) { return [@"ahir " stringByAppendingString:time]; }
+  return [NSString stringWithFormat:@"%ld/%ld %@", (long)c.day, (long)c.month, time];
+}
+
++ (NSString *)presenceText:(NSDictionary *)entity connected:(BOOL)connected {
+  NSString *state = GRStr(entity[@"state"]);
+  if(!connected || ![self isOk:entity] || !state) { return [self stateTextForEntity:entity connected:connected demo:NO]; }
+  if([state isEqualToString:@"home"]) { return @"A casa"; }
+  if([state isEqualToString:@"not_home"]) { return @"Fora"; }
+  return state;
+}
+
 + (NSString *)climateTime:(NSString *)isoTime {
   NSDate *date = GRParseISODate(isoTime);
   if(!date) { return @"Hora desconeguda"; }

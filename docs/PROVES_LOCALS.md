@@ -108,3 +108,14 @@ No s'ha instal·lat l'app a l'iPad. La compilació Mac Catalyst no emula iOS 9 n
 | Instal·lació a l'iPad mini 1 amb `ideviceinstaller` | IPA 1.1.9 instal·lada; el botó de tema ja no hi és i el tema es tria a Ajustos |
 
 No comprovat: el comportament amb el llum i el sensor d'humitat reals de Home Assistant.
+
+## Revisió 1.1.10 — panell de seguretat
+
+5 de novembre de 2026.
+
+| Comprovació executada | Resultat |
+|---|---|
+| `tests/test_backend.py` (`test_security_entities_camera_and_siren`) | Superada. La càmera no exposa `entity_picture` ni el token; `/api/camera` requereix autenticació, només serveix càmeres configurades i no es desa a la memòria cau. La sirena només ofereix `turn_off`, encara que `turn_on` estigui verificat. |
+| Previsualització Mac Catalyst a 1024×768 i 768×1024 amb un Home Assistant simulat amb les entitats de seguretat de casa | Alarma amb botons d'armar, càmera que es refresca, detecció, portes i finestres, sirena, persones i bateries, de dia i de nit |
+
+No comprovat: Alarmo, la càmera, la sirena ni els sensors reals; les ordres d'armar, desarmar i aturar amb Home Assistant.

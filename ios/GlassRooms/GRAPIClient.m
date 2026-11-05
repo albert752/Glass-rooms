@@ -64,19 +64,32 @@ static NSString *const GRNoConnection = @"No hi ha connexió amb el servidor.";
   return [self request:@"GET" path:path body:nil timeout:timeout completion:completion];
 }
 
+- (NSURLSessionDataTask *)GETData:(NSString *)path timeout:(NSTimeInterval)timeout
+                       completion:(void (^)(NSString *, NSData *, NSInteger))completion {
+  return [self request:@"GET" path:path body:nil timeout:timeout raw:completion completion:nil];
+}
+
 - (NSURLSessionDataTask *)POST:(NSString *)path body:(NSDictionary *)body timeout:(NSTimeInterval)timeout completion:(GRResponse)completion {
   return [self request:@"POST" path:path body:body timeout:timeout completion:completion];
 }
 
 - (NSURLSessionDataTask *)request:(NSString *)method path:(NSString *)path body:(NSDictionary *)body
                           timeout:(NSTimeInterval)timeout completion:(GRResponse)completion {
+  return [self request:method path:path body:body timeout:timeout raw:nil completion:completion];
+}
+
+- (NSURLSessionDataTask *)request:(NSString *)method path:(NSString *)path body:(NSDictionary *)body timeout:(NSTimeInterval)timeout
+                              raw:(void (^)(NSString *, NSData *, NSInteger))raw completion:(GRResponse)completion {
   NSURL *url = [NSURL URLWithString:[self.baseURL.absoluteString stringByAppendingString:path]];
+  void (^rawFinish)(NSString *, NSData *, NSInteger) = [raw copy];
+  // Errors (and JSON error bodies) reach a raw caller as a message with no data.
   GRResponse finish = [completion copy];
+  if(rawFinish) { finish = ^(NSString *error, id data, NSInteger status) { rawFinish(error, nil, status); }; }
   if(!url) { dispatch_async(dispatch_get_main_queue(), ^{ finish(GRNoConnection, nil, 0); }); return nil; }
   NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:timeout > 0 ? timeout : 15];
   request.HTTPMethod = method;
   request.HTTPShouldHandleCookies = NO;
-  [request setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+  [request setValue:rawFinish ? @"image/jpeg, image/png" : @"application/json" forHTTPHeaderField:@"Accept"];
   if(self.token) { [request setValue:[@"Bearer " stringByAppendingString:self.token] forHTTPHeaderField:@"Authorization"]; }
   if([method isEqualToString:@"POST"]) {
     [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
@@ -98,6 +111,10 @@ static NSString *const GRNoConnection = @"No hi ha connexió amb el servidor.";
       return;
     }
     NSInteger status = [response isKindOfClass:[NSHTTPURLResponse class]] ? ((NSHTTPURLResponse *)response).statusCode : 0;
+    if(rawFinish && status >= 200 && status < 300 && data.length && ![response.MIMEType hasPrefix:@"application/json"]) {
+      rawFinish(nil, data, status);
+      return;
+    }
     id parsed = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
     NSDictionary *json = GRDict(parsed) ?: @{@"error": @"No s’ha pogut llegir la resposta del servidor."};
     BOOL ok = status >= 200 && status < 300 && GRDict(parsed);

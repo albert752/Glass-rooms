@@ -25,6 +25,14 @@ static UIControl *GRFindControl(UIView *view, NSString *identifier) {
   return nil;
 }
 
+static void GRScrollToEnd(UIView *view) {
+  if([view isKindOfClass:[UIScrollView class]] && ((UIScrollView *)view).scrollEnabled && view.bounds.size.width > 600) {
+    UIScrollView *scroll = (UIScrollView *)view;
+    [scroll setContentOffset:CGPointMake(0, MAX(0, scroll.contentSize.height + scroll.contentInset.bottom - scroll.bounds.size.height)) animated:NO];
+  }
+  for(UIView *child in view.subviews) { GRScrollToEnd(child); }
+}
+
 static void GRRun(NSArray *steps, NSUInteger index) {
   if(index >= steps.count) { exit(0); }
   NSArray *step = steps[index];
@@ -56,9 +64,15 @@ __attribute__((constructor)) static void GRInstallSnapshots(void) {
     add(@"climate-day", ^{ [panel navigate:@"climate"]; });
     add(@"room-drawer-day", ^{ [panel navigate:@"rooms"]; [panel openRoom:@"menjador"]; });
     add(@"settings-day", ^{ [panel closeModal]; [panel openSettings]; });
+    add(@"security-day", ^{ [panel closeModal]; [panel navigate:@"security"]; });
+    add(@"", ^{ [panel navigate:@"rooms"]; });
     add(@"rooms-night", ^{ [panel closeModal]; [panel setThemeChoice:@"night"]; [panel navigate:@"rooms"]; });
     add(@"climate-night", ^{ [panel navigate:@"climate"]; });
     add(@"climate-humidity-night", ^{ [GRFindControl(window, @"sensor.hum_menjador") sendActionsForControlEvents:UIControlEventTouchUpInside]; });
+    add(@"security-night", ^{ [panel navigate:@"security"]; });
+    add(@"", ^{});
+    add(@"security-night-camera", ^{});
+    add(@"security-night-end", ^{ GRScrollToEnd(window); });
     add(@"room-drawer-night", ^{ [panel navigate:@"rooms"]; [panel openRoom:@"menjador"]; });
     add(@"lights-drawer-night", ^{ [panel closeModal]; [panel navigate:@"lights"]; });
     add(@"after-switch", ^{

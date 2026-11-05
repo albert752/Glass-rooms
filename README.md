@@ -1,10 +1,21 @@
 # Glass Rooms
 
-## Revisió 1.1.9
+## Revisió 1.1.10
 
 **Migració des de 1.0.x:** a les opcions privades de Glass Rooms, elimina `panel_password` i configura `panel_pin` amb un PIN nou de 6 a 8 dígits. Desa les opcions i reinicia l'aplicació. La contrasenya antiga no es converteix automàticament en PIN; si falta `panel_pin`, el servidor no arrenca. L'accés al panell es fa amb el teclat numèric de la pàgina. El PIN d'alarma, si n'hi ha, continua sent independent.
 
-**Novetat 1.1.9:**
+**Novetat 1.1.10:** l'app per a iPad té un panell de **Seguretat** a pantalla completa. Hi surten:
+
+- l'alarma, amb els botons d'armar i desarmar;
+- la càmera, amb una imatge nova cada 2,5 s i la detecció de moviment i de persones;
+- les portes i les finestres;
+- la sirena, que només es pot aturar;
+- qui és a casa;
+- les bateries dels sensors.
+
+El servidor admet ara els dominis `camera`, `siren`, `person` i `device_tracker` i té la ruta `/api/camera`. La configuració és a [APP_IOS.md](docs/APP_IOS.md#panell-de-seguretat-des-de-1110).
+
+**1.1.9:**
 
 - **Historial de clima:** cada sèrie es tanca amb la lectura actual del sensor. Així, un sensor que no ha canviat en tot el període (sovint la humitat) dibuixa una línia en lloc de quedar buit, tant al panell web com a l'app.
 - **Llums que no responen:** si un llum no arriba a l'estat demanat 10 segons després d'una ordre, l'app el bloqueja. El bloqueig dura fins que Home Assistant n'informa un estat nou o fins que passen 2 minuts.

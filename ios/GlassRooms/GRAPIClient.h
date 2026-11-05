@@ -17,6 +17,9 @@ typedef void (^GRResponse)(NSString *_Nullable error, id _Nullable data, NSInteg
 @property (atomic, readonly, copy, nullable) NSString *untrustedFingerprint;
 
 - (nullable NSURLSessionDataTask *)GET:(NSString *)path timeout:(NSTimeInterval)timeout completion:(GRResponse)completion;
+// Raw body (camera images); error is nil only for a 2xx response with a body.
+- (nullable NSURLSessionDataTask *)GETData:(NSString *)path timeout:(NSTimeInterval)timeout
+                                completion:(void (^)(NSString *_Nullable error, NSData *_Nullable data, NSInteger status))completion;
 - (nullable NSURLSessionDataTask *)POST:(NSString *)path body:(NSDictionary *)body timeout:(NSTimeInterval)timeout completion:(GRResponse)completion;
 - (void)invalidate;
 @end
