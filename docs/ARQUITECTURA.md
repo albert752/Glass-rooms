@@ -2,7 +2,7 @@
 
 ```text
 iPad / navegador de casa          App nativa iOS 9 (ios/)
-  │ cookie + CSRF, mateix origen     │ Authorization: Bearer app_token
+  │ cookie + CSRF, mateix origen     │ Authorization: Bearer PIN (o app_token)
   └──────────────┬───────────────────┘
                  │ HTTP o HTTPS directe, port 8099
   ▼
@@ -29,7 +29,7 @@ El token de Supervisor té accés ampli a Core. La restricció per entitat és u
 
 El PIN del panell queda en les opcions privades de Supervisor; en memòria es comprova amb PBKDF2. Les sessions aleatòries caduquen al cap de 12 hores i es perden en reiniciar; estan lligades a la IP del client. La cookie és HttpOnly, `SameSite=Strict` i `Secure` si hi ha TLS. El client només rep un nonce CSRF temporal. iOS 9 pot ignorar SameSite: el servidor exigeix també origen exacte o Referer del mateix origen, JSON i nonce. No accepta capçaleres de proxy com a prova de xarxa o transport.
 
-L'[app nativa](APP_IOS.md) no usa cookie ni PIN: envia `Authorization: Bearer` amb `app_token`. El servidor en guarda només l'SHA-256 i el compara en temps constant; els intents erronis comparteixen el límit del login (5 per minut i IP). Aquestes peticions no porten credencial ambiental, de manera que no necessiten origen ni nonce CSRF, però continuen sotmeses a la llista de xarxes, a `allowed_hosts` i als mateixos límits d'ordres. Sense `app_token` configurat, qualsevol capçalera Bearer es rebutja.
+L'[app nativa](APP_IOS.md) no usa cookie: envia `Authorization: Bearer` amb el PIN del panell o, si s'ha configurat, `app_token`. Per al PIN, el servidor en guarda un HMAC-SHA256 amb la sal aleatòria de l'arrencada (per no executar PBKDF2 a cada petició); per al token, l'SHA-256; tots dos es comparen en temps constant; els intents erronis comparteixen el límit del login (5 per minut i IP). Aquestes peticions no porten credencial ambiental, de manera que no necessiten origen ni nonce CSRF, però continuen sotmeses a la llista de xarxes, a `allowed_hosts` i als mateixos límits d'ordres. Qualsevol altre valor Bearer es rebutja.
 
 Els logs no inclouen cossos, PINs, capçaleres ni respostes de Core. El PIN d'accés es buida de la interfície abans de transmetre'l i no es desa en preferències; el PIN d'alarma es buida del seu camp abans de transmetre'l. `localStorage` només conté el tema i la preferència de vidre; si no funciona, la interfície continua amb els valors predeterminats. Les API, l'HTML, el CSS i el JavaScript se serveixen amb `no-store`; les il·lustracions SVG públiques es conserven un dia i porten una versió a l'URL per renovar-les en actualitzar el panell. Els PINs encara necessiten HTTPS per protegir el transport.
 

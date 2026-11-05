@@ -124,6 +124,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertNotIn(token, repr(vars(settings)))
         self.assertFalse(Settings(config()).check_app_token(token))
         self.assertFalse(Settings(config(app_token="")).check_app_token(""))
+        self.assertTrue(Settings(config()).check_app_token("12345678"))
 
     def test_tls_paths_require_pair_and_ssl_basename(self):
         for values in [{"tls_certfile": "cert.pem"}, {"tls_certfile": "../cert.pem", "tls_keyfile": "key.pem"},
@@ -572,6 +573,20 @@ class HTTPTests(unittest.TestCase):
         conn.close()
         self.assertEqual(self.fake.calls, [("light", "turn_on", {"entity_id": LIGHT})])
         self.assertEqual(self.call("/api/login", "POST", {"pin": self.options["panel_pin"]}, headers=headers)[0], 400)
+
+    def test_native_app_accepts_panel_pin_as_bearer(self):
+        headers = {"Authorization": "Bearer " + self.options["panel_pin"]}
+        self.assertEqual(self.call("/api/session", headers=headers)[1]["authenticated"], True)
+        self.assertEqual(self.call("/api/state", headers=headers)[0], 200)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        conn.request("POST", "/api/action", json.dumps({"entity_id": LIGHT, "action": "turn_on"}),
+                     dict(headers, **{"Content-Type": "application/json"}))
+        self.assertEqual(conn.getresponse().status, 200)
+        conn.close()
+        for wrong in ["87654321", "1234567", "123456789", "12345678 "]:
+            with self.subTest(wrong=wrong):
+                self.assertEqual(self.call("/api/state", headers={"Authorization": "Bearer " + wrong})[0], 401)
+        self.assertFalse(Settings(self.options).check_app_token(None))
 
     def test_native_app_token_fails_closed(self):
         valid = self.use_app_token()

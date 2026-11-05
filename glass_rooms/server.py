@@ -142,6 +142,7 @@ class Settings:
         self.pin_salt = secrets.token_bytes(32)
         self.pin_hash = b""
         self.app_token_hash = b""
+        self.pin_bearer_hash = b""
         self.catalog = CATALOG
         self.by_id = {item["entity_id"]: item for item in self.catalog}
         if preview:
@@ -168,6 +169,9 @@ class Settings:
         if not isinstance(pin, str) or not re.fullmatch(r"[0-9]{6,8}", pin):
             raise ValueError("Configureu panel_pin privat, de 6 a 8 dígits.")
         self.pin_hash = self.pin_digest(pin)
+        # The native app sends the panel PIN on every request; a keyed SHA-256 avoids running
+        # PBKDF2 for each poll while failed attempts stay rate limited like the PIN pad.
+        self.pin_bearer_hash = hmac.new(self.pin_salt, pin.encode("ascii"), hashlib.sha256).digest()
         app_token = options.get("app_token", "")
         if not isinstance(app_token, str) or (app_token and not re.fullmatch(APP_TOKEN_PATTERN, app_token)):
             raise ValueError("app_token ha de quedar buit o tenir de 32 a 128 caràcters A-Z, a-z, 0-9, _ o -.")
@@ -242,8 +246,13 @@ class Settings:
             self.pin_hash, self.pin_digest(pin))
 
     def check_app_token(self, token):
-        """The native app authenticates with a private bearer token instead of the PIN pad."""
-        return (bool(self.app_token_hash) and isinstance(token, str) and bool(re.fullmatch(APP_TOKEN_PATTERN, token))
+        """The native app authenticates with the panel PIN (or the optional app_token) as a bearer token."""
+        if not isinstance(token, str):
+            return False
+        if re.fullmatch(r"[0-9]{6,8}", token):
+            return bool(self.pin_bearer_hash) and hmac.compare_digest(
+                self.pin_bearer_hash, hmac.new(self.pin_salt, token.encode("ascii"), hashlib.sha256).digest())
+        return (bool(self.app_token_hash) and bool(re.fullmatch(APP_TOKEN_PATTERN, token))
                 and hmac.compare_digest(self.app_token_hash, hashlib.sha256(token.encode("ascii")).digest()))
 
     def allows_client(self, address):
@@ -960,7 +969,7 @@ class Handler(BaseHTTPRequestHandler):
         if token is not None:
             if not self.app.settings.check_app_token(token):
                 self.app.rate_limit(self.client_address[0], "login", 5, 60)
-                raise PublicError("El token de l'app no és vàlid o l'accés de l'app no està configurat.", 401)
+                raise PublicError("PIN o token de l'app incorrecte.", 401)
             return "", {"csrf": "", "app": True}
         cookies = http.cookies.SimpleCookie()
         try:

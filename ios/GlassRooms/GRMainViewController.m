@@ -1246,7 +1246,7 @@ static GRMetrics GRMetricsForWidth(CGFloat width) {
     : (self.model.connected ? @"Home Assistant connectat." : @"Pendent de connectar amb Home Assistant."));
   NSString *live = self.model.liveUpdates ? @"Canvis d’estat en directe actius." : (self.model.connected ? @"Connexió d’esdeveniments reconnectant; comprovació de seguretat cada 30 segons." : @"Esperant la connexió d’esdeveniments.");
   NSURL *base = self.model.client.baseURL;
-  NSString *transport = !base ? @"Sense servidor configurat." : ([base.scheme isEqualToString:@"https"] ? @"Transport HTTPS." : @"Transport HTTP local, sense xifrat. El token viatja sense protegir dins la xarxa.");
+  NSString *transport = !base ? @"Sense servidor configurat." : ([base.scheme isEqualToString:@"https"] ? @"Transport HTTPS." : @"Transport HTTP local, sense xifrat. El PIN viatja sense protegir dins la xarxa.");
   for(NSString *line in @[status, live, transport]) { [section addView:GRWrappingLabel(line, GRFont(12, UIFontWeightRegular), t.muted, 19) top:2]; }
   if(self.model.error.length && !self.model.connected) { [section addView:GRWrappingLabel(self.model.error, GRFont(12, UIFontWeightRegular), t.deviceIssue, 19) top:4]; }
 
@@ -1256,13 +1256,14 @@ static GRMetrics GRMetricsForWidth(CGFloat width) {
   _serverField.returnKeyType = UIReturnKeyNext;
   _serverField.accessibilityLabel = @"Adreça del panell";
   [section addView:_serverField top:6 height:46];
-  [section addView:GRLabel(@"Token de l’app (opció app_token)", GRFont(12, UIFontWeightRegular), t.text) top:12];
-  _tokenField = [self textField:preferences.token placeholder:@"Mínim 32 caràcters" secure:YES];
+  [section addView:GRLabel(@"PIN del panell (el mateix que panel_pin)", GRFont(12, UIFontWeightRegular), t.text) top:12];
+  _tokenField = [self textField:preferences.token placeholder:@"6 a 8 dígits" secure:YES];
+  _tokenField.keyboardType = UIKeyboardTypeNumberPad;
   _tokenField.returnKeyType = UIReturnKeyDone;
-  _tokenField.accessibilityLabel = @"Token de l’app";
+  _tokenField.accessibilityLabel = @"PIN del panell";
   [section addView:_tokenField top:6 height:46];
-  NSString *storage = !preferences.token.length ? @"El token es desa al clauer de l’iPad, no al servidor ni a les preferències visibles."
-    : (preferences.tokenInKeychain ? @"Token desat al clauer de l’iPad." : @"El clauer no està disponible amb aquesta signatura; el token es desa dins l’espai privat de l’app.");
+  NSString *storage = !preferences.token.length ? @"El PIN es desa al clauer de l’iPad perquè l’app s’obri sense demanar-lo."
+    : (preferences.tokenInKeychain ? @"PIN desat al clauer de l’iPad." : @"El clauer no està disponible amb aquesta signatura; el PIN es desa dins l’espai privat de l’app.");
   [section addView:GRWrappingLabel(storage, GRFont(12, UIFontWeightRegular), t.muted, 19) top:6];
   GRWrapView *buttons = [GRWrapView new];
   [buttons addSubview:[GRButton buttonWithTitle:@"Desa i connecta" style:GRButtonStyleAction handler:^(GRButton *b) { [weakSelf saveConnection]; }]];
@@ -1352,9 +1353,10 @@ static GRMetrics GRMetricsForWidth(CGFloat width) {
   NSURL *base = [GRAPIClient normalizedBaseURL:_serverField.text ?: @"" error:&problem];
   if(!base) { [self toast:problem]; return; }
   NSString *token = [_tokenField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-  NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9_-]{32,128}$" options:0 error:NULL];
-  if(token.length && ![pattern firstMatchInString:token options:0 range:NSMakeRange(0, token.length)]) {
-    [self toast:@"El token ha de tenir de 32 a 128 caràcters A-Z, a-z, 0-9, _ o -."];
+  // The panel PIN (6-8 digits); a long app_token from earlier versions is still accepted.
+  NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"^([0-9]{6,8}|[A-Za-z0-9_-]{32,128})$" options:0 error:NULL];
+  if(![pattern firstMatchInString:token options:0 range:NSMakeRange(0, token.length)]) {
+    [self toast:@"El PIN ha de tenir de 6 a 8 dígits, el mateix que panel_pin."];
     return;
   }
   GRPreferences *preferences = [GRPreferences shared];

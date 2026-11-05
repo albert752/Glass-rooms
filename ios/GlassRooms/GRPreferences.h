@@ -1,4 +1,4 @@
-// Glass Rooms for iOS 9: local preferences. The app token stays in the keychain when iOS allows it.
+// Glass Rooms for iOS 9: local preferences. The panel PIN stays in the keychain when iOS allows it.
 #import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN

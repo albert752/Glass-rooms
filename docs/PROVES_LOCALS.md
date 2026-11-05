@@ -63,3 +63,13 @@ Corregides dues declaracions de funció dins d’un bloc en mode estricte. El co
 | Previsualització Mac Catalyst a 1024×768 i 768×1024 | Portada, resum, clima amb gràfica, calaix d'estança amb controls, llums, ajustos, tema de nit i primera configuració |
 
 No s'ha instal·lat l'app a l'iPad. La compilació Mac Catalyst no emula iOS 9 ni l'A5. Vegeu [APP_IOS.md](APP_IOS.md#què-sha-comprovat).
+
+## Revisió 1.1.5 — PIN com a credencial de l'app
+
+5 de novembre de 2026. L'app nativa accepta el `panel_pin` com a credencial Bearer.
+
+| Comprovació executada | Resultat |
+|---|---|
+| `tests/test_backend.py` | Superada, amb PIN Bearer correcte i PINs erronis o mal formats rebutjats |
+| `ios/scripts/test.sh` | 47 comprovacions superades, inclosa la connexió amb el PIN |
+| Instal·lació a l'iPad mini 1 (iOS 9.3.5, jailbreak + AppSync Unified) amb `ideviceinstaller` | Instal·lació completada; l'execució i la connexió a Home Assistant les confirma l'usuari |

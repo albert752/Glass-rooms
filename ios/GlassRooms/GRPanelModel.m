@@ -45,7 +45,7 @@ static const NSTimeInterval GRPollInterval = 30;
   self.client = client;
   self.authenticated = NO; self.preview = NO; self.demo = NO;
   [self clearState];
-  self.configurationProblem = client ? nil : @"Escriu l’adreça del panell i el token de l’app (app_token) i toca «Desa i connecta».";
+  self.configurationProblem = client ? nil : @"Escriu l’adreça del panell i el PIN del panell i toca «Desa i connecta».";
   [self.delegate panelModel:self didUpdateWithForce:YES changed:YES];
   if(client) { [self session]; }
   else { [self.delegate panelModel:self needsConfiguration:self.configurationProblem]; }
@@ -102,8 +102,8 @@ static const NSTimeInterval GRPollInterval = 30;
     if(self.authenticated || self.preview) { self.configurationProblem = nil; [self refresh:NO]; }
     else {
       [self requireConfiguration:self.client.hasToken
-        ? @"El servidor no accepta el token. Actualitza Glass Rooms a 1.1.4 o posterior i revisa app_token."
-        : @"Introdueix el token de l’app (app_token) i toca «Desa i connecta»."];
+        ? @"El servidor no accepta el PIN. Actualitza Glass Rooms a 1.1.5 o posterior i revisa panel_pin."
+        : @"Introdueix el PIN del panell i toca «Desa i connecta»."];
     }
   }];
 }

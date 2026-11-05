@@ -75,7 +75,7 @@ A la pestanya **Configuració** de Glass Rooms:
 | `entity_ids` | Llista opcional d'altres entitats de qualsevol domini, com sensors, interruptors, escenes o ventiladors. |
 | Sensors ambientals | Afegeix els IDs reals `sensor.*` de temperatura i humitat a `entity_ids`. Han de publicar `device_class` igual a `temperature` o `humidity`; el mòdul Clima els detecta automàticament. |
 | `panel_pin` | Un PIN únic de 6 a 8 dígits, introduït només aquí. No és el PIN d'alarma ni cap credencial de Home Assistant. |
-| `app_token` | Opcional. Buit desactiva l'[app nativa per a iPad](APP_IOS.md). Per activar-la, un valor aleatori de 32 a 128 caràcters `A-Z a-z 0-9 _ -`, introduït només aquí i a l'app. Tracta'l com una contrasenya. |
+| `app_token` | Opcional; deixa'l buit. L'[app nativa per a iPad](APP_IOS.md) s'identifica amb `panel_pin`. Si el vols fer servir, un valor aleatori de 32 a 128 caràcters `A-Z a-z 0-9 _ -` que l'app també accepta. |
 | `allowed_hosts` | L'adreça exacta amb què obriràs el panell, inclòs el port si escau: `ADREÇA_HA:8099` per a la URL inicial. Afegeix un nom local només si l'utilitzes realment. Sense `http://` ni rutes. |
 | `allowed_networks` | La xarxa CIDR real de casa, o IPs concretes `/32` amb reserva DHCP. No es pot deduir la màscara només de l'adreça `ADREÇA_HA`. Consulta-la al router. |
 | `verified_actions` | Mantén `[]` fins a completar les proves. Després, afegeix `entity_id:servei`; només es mostra si Home Assistant publica el servei per aquell domini. |

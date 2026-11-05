@@ -84,8 +84,11 @@ static void serverTests(NSString *port, NSString *token) {
   // A wrong token never reaches state and asks for configuration.
   [model useClient:[[GRAPIClient alloc] initWithBaseURL:base token:@"wrong-token-wrong-token-wrong-token" pinnedFingerprint:nil]];
   CHECK(waitFor(^{ return (BOOL)(model.configurationProblem != nil && !model.authenticated); }, 5), @"wrong token accepted");
-  CHECK([model.configurationProblem rangeOfString:@"token"].location != NSNotFound, @"%@", model.configurationProblem);
+  CHECK([model.configurationProblem rangeOfString:@"incorrecte"].location != NSNotFound, @"%@", model.configurationProblem);
 
+  // The panel PIN works as the app credential (fake_panel.py uses 12345678).
+  [model useClient:[[GRAPIClient alloc] initWithBaseURL:base token:@"12345678" pinnedFingerprint:nil]];
+  CHECK(waitFor(^{ return (BOOL)(model.connected && model.entities.count == 3); }, 5), @"PIN not accepted: %@", model.error);
   [model useClient:[[GRAPIClient alloc] initWithBaseURL:base token:token pinnedFingerprint:nil]];
   CHECK(waitFor(^{ return (BOOL)(model.connected && model.entities.count == 3); }, 5), @"state not loaded: %@", model.error);
   CHECK(model.authenticated && !model.preview);
