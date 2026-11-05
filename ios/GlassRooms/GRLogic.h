@@ -19,6 +19,13 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSArray<NSDictionary *> *)availableLights:(NSArray *)lights action:(NSString *)action;
 + (NSString *)summaryValueForCategory:(NSString *)category entities:(NSArray *)entities connected:(BOOL)connected demo:(BOOL)demo;
 + (NSString *)climateReading:(NSDictionary *)entity connected:(BOOL)connected;
+// Numeric state of an available sensor, or nil.
++ (nullable NSNumber *)numericState:(NSDictionary *)entity connected:(BOOL)connected;
+// Mean of the available climate sensors with this device_class ("temperature" or "humidity").
++ (nullable NSNumber *)averageClimate:(NSArray *)entities deviceClass:(NSString *)deviceClass connected:(BOOL)connected;
+// Catalan decimal text with one decimal: 21.44 -> "21,4", 22 -> "22,0".
++ (NSString *)shortNumber:(double)value;
++ (nullable NSDictionary *)alarmPanel:(NSArray *)entities;
 + (NSString *)climateTime:(nullable NSString *)isoTime;
 + (nullable NSString *)attributeSummary:(NSDictionary *)entity live:(BOOL)live;
 + (NSString *)clockText:(NSDate *)date;

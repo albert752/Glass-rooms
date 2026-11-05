@@ -26,8 +26,6 @@ static NSString *const GRFallbackTokenKey = @"glass-rooms-token-fallback";
   return [@[@"auto", @"day", @"night"] containsObject:theme] ? theme : @"auto";
 }
 - (void)setTheme:(NSString *)value { [[self defaults] setObject:value forKey:@"glass-rooms-theme"]; }
-- (BOOL)glass { return [[self defaults] boolForKey:@"glass-rooms-glass"]; }
-- (void)setGlass:(BOOL)value { [[self defaults] setBool:value forKey:@"glass-rooms-glass"]; }
 - (BOOL)keepAwake { return [[self defaults] boolForKey:@"glass-rooms-keep-awake"]; }
 - (void)setKeepAwake:(BOOL)value { [[self defaults] setBool:value forKey:@"glass-rooms-keep-awake"]; }
 

@@ -9,7 +9,6 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) NSString *token;
 @property (nonatomic, copy, nullable) NSString *pinnedFingerprint;
 @property (nonatomic, copy) NSString *theme; // auto, day or night
-@property (nonatomic) BOOL glass;
 @property (nonatomic) BOOL keepAwake;
 @property (nonatomic, readonly) BOOL tokenInKeychain;
 @end

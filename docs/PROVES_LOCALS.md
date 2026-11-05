@@ -73,3 +73,14 @@ No s'ha instal·lat l'app a l'iPad. La compilació Mac Catalyst no emula iOS 9 n
 | `tests/test_backend.py` | Superada, amb PIN Bearer correcte i PINs erronis o mal formats rebutjats |
 | `ios/scripts/test.sh` | 47 comprovacions superades, inclosa la connexió amb el PIN |
 | Instal·lació a l'iPad mini 1 (iOS 9.3.5, jailbreak + AppSync Unified) amb `ideviceinstaller` | Instal·lació completada; l'execució i la connexió a Home Assistant les confirma l'usuari |
+
+## Revisió 1.1.6 — redisseny «Nit càlida» de l'app per a iPad
+
+5 de novembre de 2026. Només canvia l'app nativa; el servidor i el panell web només canvien de número de versió.
+
+| Comprovació executada | Resultat |
+|---|---|
+| `python3 -m unittest discover -s tests` (inclou `ios/scripts/test.sh`) | 53 proves superades; 47 comprovacions natives sense errors |
+| `ios/scripts/build.sh` | IPA armv7 + arm64 contra l'SDK 9.3 amb `-Werror` i `-Werror=unguarded-availability` |
+| Previsualització Mac Catalyst a 1024×768 i 768×1024 contra el servidor real amb un Home Assistant simulat | Estances, resum, clima amb historial, calaix d'estança, llums i ajustos, de dia i de nit; l'interruptor de la cuina encén el llum al servidor |
+| Instal·lació a l'iPad mini 1 amb `ideviceinstaller` | Instal·lació completada (`cat.glassrooms.panel` 1.1.6). L'aspecte i la connexió al dispositiu els confirma l'usuari: sense la imatge de disc de desenvolupador no es poden fer captures de l'iPad. |

@@ -9,4 +9,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (CGFloat)heightForWidth:(CGFloat)width;
 @end
 
+// Small filled curve for the clock column; values are drawn left to right, oldest first.
+@interface GRSparklineView : UIView
+@property (nonatomic, copy) NSArray<NSNumber *> *values;
+@end
+
 NS_ASSUME_NONNULL_END

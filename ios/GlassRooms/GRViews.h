@@ -8,14 +8,13 @@ UIImageView *GRIconView(NSString *name, BOOL large, UIColor *tint);
 UILabel *GRLabel(NSString *_Nullable text, UIFont *font, UIColor *color);
 UILabel *GRWrappingLabel(NSString *_Nullable text, UIFont *font, UIColor *color, CGFloat lineHeight);
 
-// Draws the radial page gradient of the web panel.
-@interface GRBackgroundView : UIView
-@end
+// Colours a UISwitch with the theme: accent track when on, flat track when off.
+void GRStyleSwitch(UISwitch *toggle);
 
 typedef NS_ENUM(NSInteger, GRButtonStyle) {
-  GRButtonStyleAction,
-  GRButtonStyleOutline,
-  GRButtonStylePrimary,
+  GRButtonStyleAction,    // hairline border, body text
+  GRButtonStyleOutline,   // same look, larger corner
+  GRButtonStylePrimary,   // accent fill
   GRButtonStylePeriod,
   GRButtonStyleSegment,
   GRButtonStylePlain

@@ -131,6 +131,37 @@ static NSCalendar *GRCalendar(void) {
   return unit.length ? [NSString stringWithFormat:@"%@ %@", state, unit] : state;
 }
 
++ (NSNumber *)numericState:(NSDictionary *)entity connected:(BOOL)connected {
+  NSString *state = GRStr(entity[@"state"]);
+  if(!connected || ![self isOk:entity] || !state) { return nil; }
+  NSRegularExpression *number = [NSRegularExpression regularExpressionWithPattern:@"^-?\\d+(?:\\.\\d+)?$" options:0 error:NULL];
+  if(![number firstMatchInString:state options:0 range:NSMakeRange(0, state.length)]) { return nil; }
+  return @(state.doubleValue);
+}
+
++ (NSNumber *)averageClimate:(NSArray *)entities deviceClass:(NSString *)deviceClass connected:(BOOL)connected {
+  double total = 0; NSUInteger count = 0;
+  for(NSDictionary *entity in [self entities:entities inCategory:@"climate"]) {
+    if(![GRStr(GRDict(entity[@"attributes"])[@"device_class"]) isEqualToString:deviceClass]) { continue; }
+    NSNumber *value = [self numericState:entity connected:connected];
+    if(value) { total += value.doubleValue; count++; }
+  }
+  return count ? @(total / count) : nil;
+}
+
++ (NSString *)shortNumber:(double)value {
+  if(!isfinite(value)) { return @"—"; }
+  NSString *text = [NSString stringWithFormat:@"%.1f", round(value * 10) / 10];
+  return [text isEqualToString:@"-0.0"] ? @"0,0" : [text stringByReplacingOccurrencesOfString:@"." withString:@","];
+}
+
++ (NSDictionary *)alarmPanel:(NSArray *)entities {
+  for(id entity in entities) {
+    if([GRStr(GRDict(entity)[@"domain"]) isEqualToString:@"alarm_control_panel"]) { return entity; }
+  }
+  return nil;
+}
+
 + (NSString *)climateTime:(NSString *)isoTime {
   NSDate *date = GRParseISODate(isoTime);
   if(!date) { return @"Hora desconeguda"; }

@@ -30,31 +30,14 @@ UILabel *GRWrappingLabel(NSString *text, UIFont *font, UIColor *color, CGFloat l
   return label;
 }
 
-@implementation GRBackgroundView
-- (instancetype)initWithFrame:(CGRect)frame {
-  if((self = [super initWithFrame:frame])) { self.contentMode = UIViewContentModeRedraw; self.opaque = YES; }
-  return self;
+void GRStyleSwitch(UISwitch *toggle) {
+  GRTheme *t = [GRTheme current];
+  toggle.onTintColor = t.accent;
+  toggle.tintColor = t.track;
+  toggle.backgroundColor = t.track;
+  toggle.layer.cornerRadius = 15.5;
+  toggle.thumbTintColor = toggle.on ? t.onAccent : t.knob;
 }
-- (void)drawRect:(CGRect)rect {
-  NSArray<UIColor *> *stops = [GRTheme current].backgroundStops;
-  CGContextRef context = UIGraphicsGetCurrentContext();
-  CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
-  CGFloat locations[3] = {0, .45, 1};
-  NSArray *colors = @[(__bridge id)stops[0].CGColor, (__bridge id)stops[1].CGColor, (__bridge id)stops[2].CGColor];
-  CGGradientRef gradient = CGGradientCreateWithColors(space, (__bridge CFArrayRef)colors, locations);
-  // radial-gradient(ellipse at 85% 0%): farthest-corner ellipse, scaled from a circle.
-  CGSize size = self.bounds.size;
-  CGPoint centre = CGPointMake(size.width * .85, 0);
-  CGFloat rx = MAX(centre.x, size.width - centre.x) * M_SQRT2, ry = size.height * M_SQRT2;
-  CGContextSaveGState(context);
-  CGContextTranslateCTM(context, centre.x, centre.y);
-  CGContextScaleCTM(context, 1, ry / rx);
-  CGContextDrawRadialGradient(context, gradient, CGPointZero, 0, CGPointZero, rx, kCGGradientDrawsAfterEndLocation);
-  CGContextRestoreGState(context);
-  CGGradientRelease(gradient);
-  CGColorSpaceRelease(space);
-}
-@end
 
 @implementation GRButton
 
@@ -62,7 +45,7 @@ UILabel *GRWrappingLabel(NSString *text, UIFont *font, UIColor *color, CGFloat l
   GRButton *button = [GRButton buttonWithType:UIButtonTypeCustom];
   button.style = style;
   button.handler = handler;
-  button.minimumHeight = style == GRButtonStylePrimary ? 48 : (style == GRButtonStylePeriod ? 42 : (style == GRButtonStyleSegment ? 45 : 46));
+  button.minimumHeight = style == GRButtonStylePrimary || style == GRButtonStyleOutline ? 52 : (style == GRButtonStylePeriod ? 40 : (style == GRButtonStyleSegment ? 45 : 46));
   button.titleLabel.numberOfLines = 0;
   button.adjustsImageWhenHighlighted = NO;
   [button setTitle:title forState:UIControlStateNormal];
@@ -75,39 +58,33 @@ UILabel *GRWrappingLabel(NSString *text, UIFont *font, UIColor *color, CGFloat l
 
 - (UIEdgeInsets)padding {
   switch(self.style) {
-    case GRButtonStyleOutline: return UIEdgeInsetsMake(10, 17, 10, 17);
-    case GRButtonStylePrimary: return UIEdgeInsetsMake(13, 18, 13, 18);
-    case GRButtonStylePeriod: return UIEdgeInsetsMake(8, 14, 8, 14);
+    case GRButtonStyleOutline: return UIEdgeInsetsMake(12, 20, 12, 20);
+    case GRButtonStylePrimary: return UIEdgeInsetsMake(14, 20, 14, 20);
+    case GRButtonStylePeriod: return UIEdgeInsetsMake(8, 15, 8, 15);
     case GRButtonStyleSegment: return UIEdgeInsetsMake(6, 8, 6, 8);
     case GRButtonStylePlain: return UIEdgeInsetsZero;
-    default: return UIEdgeInsetsMake(10, 14, 10, 14);
+    default: return UIEdgeInsetsMake(11, 16, 11, 16);
   }
 }
 
 - (void)applyTheme {
   GRTheme *t = [GRTheme current];
-  UIColor *background = [UIColor clearColor], *border = nil, *text = t.text;
-  CGFloat radius = 10, size = 12, weight = UIFontWeightRegular;
+  UIColor *background = [UIColor clearColor], *border = t.edge, *text = t.text;
+  CGFloat radius = 14, size = 15, weight = UIFontWeightRegular;
   switch(self.style) {
-    case GRButtonStyleAction:
-      background = self.enabled ? t.action : t.actionDisabled; border = self.enabled ? t.actionBorder : t.actionDisabledBorder; text = t.actionText; break;
-    case GRButtonStyleOutline: background = t.outline; border = t.outlineBorder; text = t.outlineText; radius = 14; break;
-    case GRButtonStylePrimary: background = t.primary; text = [UIColor whiteColor]; radius = 11; size = 14; break;
+    case GRButtonStyleAction: break;
+    case GRButtonStyleOutline: radius = 16; size = 16; break;
+    case GRButtonStylePrimary: background = t.accent; border = nil; text = t.onAccent; radius = 16; size = 16; weight = UIFontWeightSemibold; break;
     case GRButtonStylePeriod:
-      background = self.selectedLook ? t.periodSelected : t.period; border = self.selectedLook ? t.periodSelectedBorder : t.periodBorder;
-      text = t.periodText; radius = 11; size = 13; weight = self.selectedLook ? UIFontWeightSemibold : UIFontWeightRegular; break;
     case GRButtonStyleSegment:
-      background = self.selectedLook ? t.segmentedSelected : [UIColor clearColor];
-      text = self.selectedLook ? t.segmentedSelectedText : t.text; size = 13; break;
-    case GRButtonStylePlain: radius = 0; size = 15; break;
+      border = self.selectedLook ? t.accent : t.edge; text = self.selectedLook ? t.accent : t.muted; radius = 12; size = 14;
+      weight = self.selectedLook ? UIFontWeightMedium : UIFontWeightRegular; break;
+    case GRButtonStylePlain: border = nil; radius = 0; break;
   }
   self.backgroundColor = background;
   self.layer.cornerRadius = radius;
   self.layer.borderWidth = border ? 1 : 0;
   self.layer.borderColor = border.CGColor;
-  if(self.style == GRButtonStyleSegment && self.selectedLook) {
-    self.layer.shadowColor = [UIColor blackColor].CGColor; self.layer.shadowOpacity = .06; self.layer.shadowRadius = 2; self.layer.shadowOffset = CGSizeMake(0, 2);
-  } else { self.layer.shadowOpacity = 0; }
   if(self.style != GRButtonStylePlain) {
     self.titleLabel.font = GRFont(size, weight);
     [self setTitleColor:text forState:UIControlStateNormal];
@@ -115,7 +92,7 @@ UILabel *GRWrappingLabel(NSString *text, UIFont *font, UIColor *color, CGFloat l
     self.titleLabel.textAlignment = NSTextAlignmentCenter;
     self.contentEdgeInsets = [self padding];
   }
-  self.alpha = self.enabled ? 1 : .52;
+  self.alpha = self.enabled ? 1 : .45;
 }
 
 - (void)setEnabled:(BOOL)enabled { [super setEnabled:enabled]; [self applyTheme]; }
@@ -123,7 +100,7 @@ UILabel *GRWrappingLabel(NSString *text, UIFont *font, UIColor *color, CGFloat l
 
 - (void)setHighlighted:(BOOL)highlighted {
   [super setHighlighted:highlighted];
-  if(self.style != GRButtonStylePlain) { self.alpha = !self.enabled ? .52 : (highlighted ? .7 : 1); }
+  if(self.style != GRButtonStylePlain) { self.alpha = !self.enabled ? .45 : (highlighted ? .65 : 1); }
 }
 
 - (CGSize)sizeThatFits:(CGSize)size {

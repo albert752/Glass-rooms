@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Rasterise the web panel's SVG art and icons into PNGs for the iOS 9 app (UIKit cannot draw SVG).
+"""Rasterise the web panel's icons and the app icon into PNGs for the iOS 9 app (UIKit cannot draw SVG).
 
 Uses macOS `sips`. The PNGs are committed, so building the app does not need this script.
-Run again after changing glass_rooms/www/assets/*.svg or the ICONS table in glass_rooms/www/app.js.
+Run again after changing the ICONS table in glass_rooms/www/app.js.
 """
 
 import re
@@ -14,7 +14,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 WWW = ROOT / "glass_rooms" / "www"
 OUT = ROOT / "ios" / "GlassRooms" / "Resources"
-ROOMS = ["menjador", "cuina", "habitacio", "despatx", "rebedor", "bany", "passadis", "lavabo"]
 
 
 def render(svg_text, target, work):
@@ -22,14 +21,6 @@ def render(svg_text, target, work):
     source.write_text(svg_text, encoding="utf-8")
     subprocess.run(["sips", "-s", "format", "png", str(source), "--out", str(target)],
                    check=True, stdout=subprocess.DEVNULL)
-
-
-def sized(svg_text, width, height):
-    """Replace the root width/height so sips rasterises the vector at the requested size."""
-    head, rest = svg_text.split(">", 1)
-    head = re.sub(r'\swidth="[^"]*"', "", head)
-    head = re.sub(r'\sheight="[^"]*"', "", head)
-    return head + ' width="%d" height="%d">' % (width, height) + rest
 
 
 def icons():
@@ -45,24 +36,30 @@ def icon_svg(name, paths, size):
             % (size, size, "#000" if solid else "none", "none" if solid else "#000", paths))
 
 
-def brand_svg(size, background="#eeeae1"):
-    # Four rounded panes from the rail's brand mark, rotated like the web logo.
+BACKGROUND = "#000000"
+
+
+def brand_mark():
+    # Four rounded panes, one lit in amber: the "Nit càlida" look of the iPad app.
+    return ('<g transform="rotate(-5 50 50)" stroke="#ffb766" stroke-width="2.6">'
+            '<rect x="25" y="23" width="23" height="25" rx="7" fill="#1d1812"/>'
+            '<rect x="52" y="23" width="23" height="25" rx="7" fill="#ffb766"/>'
+            '<rect x="25" y="52" width="23" height="25" rx="7" fill="#1d1812"/>'
+            '<rect x="52" y="52" width="23" height="25" rx="7" fill="#1d1812"/></g>')
+
+
+def brand_svg(size):
     return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="%d" height="%d">'
-            '<rect width="100" height="100" fill="%s"/>'
-            '<g transform="rotate(-5 50 50)" stroke="#747c65" stroke-width="2.6">'
-            '<rect x="25" y="23" width="23" height="25" rx="7" fill="#e3e6da"/>'
-            '<rect x="52" y="23" width="23" height="25" rx="7" fill="#889477"/>'
-            '<rect x="25" y="52" width="23" height="25" rx="7" fill="#e3e6da"/>'
-            '<rect x="52" y="52" width="23" height="25" rx="7" fill="#e3e6da"/></g></svg>' % (size, size, background))
+            '<rect width="100" height="100" fill="%s"/>%s</svg>' % (size, size, BACKGROUND, brand_mark()))
 
 
 def launch_svg(width, height):
     mark = min(width, height) * 0.12
     return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d">'
-            '<rect width="%d" height="%d" fill="#eeeae1"/>'
+            '<rect width="%d" height="%d" fill="%s"/>'
             '<g transform="translate(%f %f) scale(%f)">%s</g></svg>'
-            % (width, height, width, height, width, height, (width - mark) / 2, (height - mark) / 2, mark / 100,
-               brand_svg(100).split(">", 1)[1].replace("</svg>", "").replace('<rect width="100" height="100" fill="#eeeae1"/>', "")))
+            % (width, height, width, height, width, height, BACKGROUND, (width - mark) / 2, (height - mark) / 2, mark / 100,
+               brand_mark()))
 
 
 def main():
@@ -71,10 +68,6 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as directory:
         work = Path(directory)
-        for room in ROOMS:
-            svg = (WWW / "assets" / (room + ".svg")).read_text(encoding="utf-8")
-            render(sized(svg, 400, 270), OUT / ("room-%s.png" % room), work)
-            render(sized(svg, 800, 540), OUT / ("room-%s@2x.png" % room), work)
         for name, paths in icons().items():
             for suffix, size in (("", 23), ("-large", 44)):
                 render(icon_svg(name, paths, size), OUT / ("icon-%s%s.png" % (name, suffix)), work)

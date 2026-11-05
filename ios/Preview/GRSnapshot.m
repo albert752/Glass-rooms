@@ -13,9 +13,9 @@ static void GRSave(NSString *name) {
   [UIImagePNGRepresentation(image) writeToFile:[directory stringByAppendingPathComponent:[name stringByAppendingString:@".png"]] atomically:YES];
 }
 
-static UIButton *GRFindButton(UIView *view, NSString *identifier) {
-  if([view isKindOfClass:[UIButton class]] && [view.accessibilityIdentifier isEqualToString:identifier]) { return (UIButton *)view; }
-  for(UIView *child in view.subviews) { UIButton *found = GRFindButton(child, identifier); if(found) { return found; } }
+static UISwitch *GRFindSwitch(UIView *view, NSString *identifier) {
+  if([view isKindOfClass:[UISwitch class]] && [view.accessibilityIdentifier isEqualToString:identifier]) { return (UISwitch *)view; }
+  for(UIView *child in view.subviews) { UISwitch *found = GRFindSwitch(child, identifier); if(found) { return found; } }
   return nil;
 }
 
@@ -48,13 +48,18 @@ __attribute__((constructor)) static void GRInstallSnapshots(void) {
     add(@"rooms-day", ^{});
     add(@"overview-day", ^{ [panel navigate:@"overview"]; });
     add(@"climate-day", ^{ [panel navigate:@"climate"]; });
-    add(@"room-modal-day", ^{ [panel navigate:@"rooms"]; [panel openRoom:@"cuina"]; });
-    add(@"lights-drawer-day", ^{ [panel closeModal]; [panel navigate:@"lights"]; });
+    add(@"room-drawer-day", ^{ [panel navigate:@"rooms"]; [panel openRoom:@"menjador"]; });
     add(@"settings-day", ^{ [panel closeModal]; [panel openSettings]; });
     add(@"rooms-night", ^{ [panel closeModal]; [panel setThemeChoice:@"night"]; [panel navigate:@"rooms"]; });
     add(@"climate-night", ^{ [panel navigate:@"climate"]; });
-    add(@"room-modal-night", ^{ [panel navigate:@"rooms"]; [panel openRoom:@"menjador"]; });
-    add(@"after-badge-tap", ^{ [panel closeModal]; [panel setThemeChoice:@"day"]; [GRFindButton(window, @"cuina") sendActionsForControlEvents:UIControlEventTouchUpInside]; });
+    add(@"room-drawer-night", ^{ [panel navigate:@"rooms"]; [panel openRoom:@"menjador"]; });
+    add(@"lights-drawer-night", ^{ [panel closeModal]; [panel navigate:@"lights"]; });
+    add(@"after-switch", ^{
+      [panel closeModal];
+      UISwitch *toggle = GRFindSwitch(window, @"cuina");
+      [toggle setOn:!toggle.on animated:NO];
+      [toggle sendActionsForControlEvents:UIControlEventValueChanged];
+    });
     add(@"", ^{ [panel setThemeChoice:@"auto"]; });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ GRRun(steps, 0); });
   }];
