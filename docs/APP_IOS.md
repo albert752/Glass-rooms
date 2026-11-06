@@ -48,13 +48,13 @@ El botó de l'escut obre una pàgina a pantalla completa:
 
 - **Alarma:** l'estat en gran i des de quan. Si està desarmada, hi ha els botons d'armar; si està armada, el de desarmar. Cada ordre passa pel calaix de confirmació i, si la política ho exigeix, demana el PIN de l'alarma.
 - **Càmera:**
-  - El servidor demana una captura a Home Assistant (`/api/camera`) i l'app la refresca cada 2,5 s, només mentre la pàgina és visible.
+  - El servidor demana una captura a Home Assistant (`/api/camera`), reduïda a 1280 px d'amplada i amb 15 s d'espera (des de 1.1.12), i l'app la refresca cada 2,5 s, només mentre la pàgina és visible.
+  - Si no arriba cap imatge, el motiu surt sobre el requadre (per exemple, l'estat HTTP que ha retornat Home Assistant).
   - Tocar la imatge l'amplia a pantalla completa. Si n'hi ha més d'una, uns botons permeten triar-la.
   - A sota hi ha el moviment i la detecció de persones, amb l'hora de l'últim canvi.
   - Les adreces internes i els tokens de la càmera mai arriben a l'app.
-- **Portes i finestres:** obertes en vermell, i des de quan.
-- **Sirena:** si sona i si té alimentació externa. Només es pot **aturar**; el servidor no ofereix mai l'ordre d'engegar-la.
-- **Qui és a casa:** les persones (`person.*`) i els dispositius (`device_tracker.*`), a casa o fora.
+- **Portes i finestres:** a sota de l'alarma (des de 1.1.12), obertes en vermell, i des de quan.
+- Des de 1.1.12 la pàgina ja no mostra la sirena ni qui és a casa, encara que siguin a `entity_ids`.
 - **Bateries:** dels sensors, de la més baixa a la més alta, amb avís per sota del 20 %.
 
 La pàgina mostra les entitats que hi ha a `entity_ids` i les classifica pel domini i per `device_class`. Les entitats `*_tamper` no hi surten. Exemple amb les entitats d'aquesta casa (opcions de Glass Rooms, en YAML):

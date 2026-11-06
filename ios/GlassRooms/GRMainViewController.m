@@ -96,6 +96,7 @@ static UIView *GRDot(BOOL lit) {
   NSURLSessionDataTask *_cameraTask;
   GRTimer *_cameraTimer;
   BOOL _cameraFailed;
+  NSString *_cameraError;
   UIControl *_cameraZoom;
   CGFloat _renderedWidth;
   UIView *_toastView;
@@ -1161,6 +1162,9 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
       live.tag = 31; live.textAlignment = NSTextAlignmentCenter;
       live.backgroundColor = GRHexA(0x000000, .55); live.layer.cornerRadius = 10; live.clipsToBounds = YES;
       [image addSubview:live];
+      UILabel *problem = GRLabel(nil, GRFont(14, UIFontWeightRegular), t.muted);
+      problem.tag = 33; problem.textAlignment = NSTextAlignmentCenter; problem.numberOfLines = 3;
+      [image addSubview:problem];
       [self updateCameraBadge:live];
       [_cameraViews setObject:image forKey:_cameraEntity];
       GRBlockView *frame = [GRBlockView new];
@@ -1170,6 +1174,7 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
         image.frame = view.bounds;
         CGFloat lw = ceil([live sizeThatFits:CGSizeZero].width) + 20;
         live.frame = CGRectMake(10, view.bounds.size.height - 30, lw, 20);
+        problem.frame = CGRectInset(view.bounds, 24, 40);
       };
       [cameraCard addView:frame top:14];
       if(cameras.count > 1) {
@@ -1216,63 +1221,6 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
       NSString *state = !ok ? [GRLogic stateTextForEntity:entity connected:connected demo:NO] : (isOpen ? (window ? @"Oberta" : @"Oberta") : @"Tancada");
       NSString *ago = ok ? [GRLogic agoText:GRStr(entity[@"changed"]) now:now] : nil;
       [openingsCard addView:[self statusRow:GRShortName(entity, @[]) detail:ago ? [@"Des de " stringByAppendingString:ago] : nil state:state lit:NO issue:isOpen || !ok] top:first ? 10 : 0];
-      first = NO;
-    }
-  }
-
-  // Sirens: state, external power and a stop button (never a start button).
-  GRFlowView *sirenCard = nil;
-  if([groups[@"sirens"] count] || [groups[@"sirenPower"] count]) {
-    BOOL sounding = NO;
-    NSMutableArray *stops = [NSMutableArray array];
-    for(NSDictionary *siren in groups[@"sirens"]) {
-      if([siren[@"status"] isEqual:@"ok"] && [siren[@"state"] isEqual:@"on"] && connected) {
-        sounding = YES;
-        for(id item in GRArray(siren[@"controls"]) ?: @[]) {
-          if([GRDict(item)[@"action"] isEqual:@"turn_off"]) { [stops addObject:@[siren, item]]; }
-        }
-      }
-    }
-    sirenCard = [self card:@"SIRENA" note:connected ? (sounding ? @"Sonant" : @"En silenci") : @""];
-    BOOL first = YES;
-    for(NSDictionary *siren in groups[@"sirens"]) {
-      BOOL ok = [siren[@"status"] isEqual:@"ok"] && connected, on = ok && [siren[@"state"] isEqual:@"on"];
-      NSString *ago = ok ? [GRLogic agoText:GRStr(siren[@"changed"]) now:now] : nil;
-      [sirenCard addView:[self statusRow:GRShortName(siren, @[@" siren on"]) detail:ago ? [@"Des de " stringByAppendingString:ago] : nil
-                                   state:ok ? (on ? @"Sona" : @"En silenci") : [GRLogic stateTextForEntity:siren connected:connected demo:NO] lit:NO issue:on || !ok] top:first ? 10 : 0];
-      first = NO;
-    }
-    for(NSDictionary *power in groups[@"sirenPower"]) {
-      BOOL ok = [power[@"status"] isEqual:@"ok"] && connected, on = ok && [power[@"state"] isEqual:@"on"];
-      [sirenCard addView:[self statusRow:@"Alimentació externa" detail:GRShortName(power, @[@" external power"])
-                                   state:ok ? (on ? @"Connectada" : @"Sense corrent") : [GRLogic stateTextForEntity:power connected:connected demo:NO] lit:NO issue:!on] top:first ? 10 : 0];
-      first = NO;
-    }
-    BOOL canCommand = connected && !self.model.preview && !self.model.busy;
-    GRButton *stop = [GRButton buttonWithTitle:@"Atura la sirena" style:sounding ? GRButtonStylePrimary : GRButtonStyleOutline handler:^(GRButton *b) {
-      for(NSArray *pair in stops) { [weakSelf.model sendAction:pair[0] control:pair[1] value:nil code:nil completion:^(NSString *error) {}]; }
-    }];
-    BOOL stoppable = NO;
-    for(NSArray *pair in stops) { if([pair[1][@"enabled"] isEqual:@YES]) { stoppable = YES; } }
-    stop.enabled = canCommand && stoppable;
-    [sirenCard addView:stop top:16];
-    if(sounding && !stoppable) { [sirenCard addView:[self note:@"Cal verificar turn_off de la sirena a verified_actions per poder-la aturar."] top:8]; }
-    else if(!sounding) { [sirenCard addView:[self note:@"Des del panell només es pot aturar; no es pot fer sonar."] top:8]; }
-  }
-
-  // People at home
-  GRFlowView *peopleCard = nil;
-  NSArray *people = groups[@"people"];
-  if(people.count) {
-    NSUInteger home = 0;
-    for(NSDictionary *person in people) { if([person[@"status"] isEqual:@"ok"] && [person[@"state"] isEqual:@"home"]) { home++; } }
-    peopleCard = [self card:@"QUI ÉS A CASA" note:connected ? [NSString stringWithFormat:@"%lu de %lu", (unsigned long)home, (unsigned long)people.count] : @""];
-    BOOL first = YES;
-    for(NSDictionary *person in people) {
-      BOOL ok = [person[@"status"] isEqual:@"ok"] && connected, atHome = ok && [person[@"state"] isEqual:@"home"];
-      NSString *ago = ok ? [GRLogic agoText:GRStr(person[@"changed"]) now:now] : nil;
-      [peopleCard addView:[self statusRow:GRShortName(person, @[]) detail:ago ? [@"Des de " stringByAppendingString:ago] : nil
-                                    state:[GRLogic presenceText:person connected:connected] lit:atHome issue:NO] top:first ? 10 : 0];
       first = NO;
     }
   }
@@ -1326,33 +1274,29 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
     [batteryCard addView:grid top:16];
   }
 
-  // Arrangement: alarm and camera on top, then the lists, then batteries.
-  NSMutableArray *top = [NSMutableArray array], *middle = [NSMutableArray array];
-  [top addObject:@[alarmCard]];
-  if(cameraCard) { [top addObject:@[cameraCard]]; }
-  for(GRFlowView *card in @[openingsCard ?: [NSNull null], sirenCard ?: [NSNull null], peopleCard ?: [NSNull null]]) {
-    if([card isKindOfClass:[GRFlowView class]]) { [middle addObject:@[card]]; }
-  }
-  if(landscape) {
-    [_viewFlow addView:[self columns:top gap:16] top:16];
-    if(middle.count) { [_viewFlow addView:[self columns:middle gap:16] top:16]; }
+  // Arrangement: doors and windows under the alarm, the camera beside them (below them in portrait), then batteries.
+  NSArray *left = openingsCard ? @[alarmCard, openingsCard] : @[alarmCard];
+  if(landscape && cameraCard) {
+    [_viewFlow addView:[self columns:@[left, @[cameraCard]] gap:16] top:16];
   } else {
-    for(NSArray *column in top) { [_viewFlow addView:column.firstObject top:16]; }
-    if(middle.count == 3) {
-      [_viewFlow addView:middle[0][0] top:16];
-      [_viewFlow addView:[self columns:@[middle[1], middle[2]] gap:16] top:16];
-    } else if(middle.count) { [_viewFlow addView:[self columns:middle gap:16] top:16]; }
+    for(UIView *card in left) { [_viewFlow addView:card top:16]; }
+    if(cameraCard) { [_viewFlow addView:cameraCard top:16]; }
   }
   if(batteryCard) { [_viewFlow addView:batteryCard top:16]; }
-  if(!alarm && !cameras.count && !openings.count && !people.count && !batteries.count && ![groups[@"sirens"] count]) {
-    [_viewFlow addView:[self note:@"Afegeix a entity_ids l’alarma, els sensors de portes i finestres, la càmera, la sirena, les persones i les bateries que vulguis veure aquí."] top:16];
+  if(!alarm && !cameras.count && !openings.count && !batteries.count) {
+    [_viewFlow addView:[self note:@"Afegeix a entity_ids l’alarma, els sensors de portes i finestres, la càmera i les bateries que vulguis veure aquí."] top:16];
   }
 }
 
 #pragma mark Camera refresh
 
+// The badge says whether the image is live; with no image yet, the reason of the last failure is shown over it.
 - (void)updateCameraBadge:(UILabel *)badge {
-  badge.text = _cameraImages[_cameraEntity ?: @""] ? (_cameraFailed ? @"SENSE SENYAL" : @"●  EN DIRECTE") : (_cameraFailed ? @"SENSE IMATGE" : @"CARREGANT…");
+  BOOL hasImage = _cameraImages[_cameraEntity ?: @""] != nil;
+  badge.text = hasImage ? (_cameraFailed ? @"SENSE SENYAL" : @"●  EN DIRECTE") : (_cameraFailed ? @"SENSE IMATGE" : @"CARREGANT…");
+  UILabel *problem = (UILabel *)[badge.superview viewWithTag:33];
+  problem.text = !hasImage && _cameraFailed ? _cameraError : nil;
+  [badge.superview.superview setNeedsLayout];
 }
 
 - (void)updateCameraRefresh {
@@ -1374,12 +1318,13 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
   if(!entityId || !self.model.client) { return; }
   NSString *path = [@"/api/camera?entity_id=" stringByAppendingString:[entityId stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]]];
   __weak GRMainViewController *weakSelf = self;
-  _cameraTask = [self.model.client GETData:path timeout:10 completion:^(NSString *error, NSData *data, NSInteger status) {
+  _cameraTask = [self.model.client GETData:path timeout:20 completion:^(NSString *error, NSData *data, NSInteger status) {
     GRMainViewController *strongSelf = weakSelf;
     if(!strongSelf) { return; }
     strongSelf->_cameraTask = nil;
     UIImage *image = data ? [UIImage imageWithData:data] : nil;
     strongSelf->_cameraFailed = image == nil;
+    strongSelf->_cameraError = image ? nil : (error ?: @"La imatge de la càmera no s’ha pogut llegir.");
     if(image) { strongSelf->_cameraImages[entityId] = image; }
     UIImageView *view = [strongSelf->_cameraViews objectForKey:entityId];
     if(image) { view.image = image; }

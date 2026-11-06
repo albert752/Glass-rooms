@@ -329,15 +329,18 @@ class HAClient:
 
     def camera_image(self, entity_id):
         """Current still image of a configured camera, as (bytes, content type)."""
-        req = request.Request(UPSTREAM + "/camera_proxy/" + parse.quote(entity_id, safe="._"), headers={
+        # Home Assistant scales the still down to 1280 px wide: a main-stream frame is too heavy for the iPad
+        # and may exceed the size limit. Cameras that grab the frame with ffmpeg need several seconds.
+        req = request.Request(UPSTREAM + "/camera_proxy/" + parse.quote(entity_id, safe="._") + "?width=1280", headers={
             "Authorization": "Bearer " + self._token, "Accept": "image/jpeg, image/png"})
         try:
-            with self._opener.open(req, timeout=8) as response:
+            with self._opener.open(req, timeout=15) as response:
                 kind = response.headers.get_content_type()
                 raw = response.read(3 * 1024 * 1024 + 1)
         except error.HTTPError as exc:
+            status = exc.code
             exc.close()
-            raise PublicError("La càmera no ha retornat cap imatge.", 502) from None
+            raise PublicError("La càmera no ha retornat cap imatge (Home Assistant " + str(status) + ").", 502) from None
         except (error.URLError, TimeoutError, OSError, ValueError):
             raise PublicError("No hi ha connexió amb Home Assistant.", 502) from None
         if kind not in {"image/jpeg", "image/png"} or not raw or len(raw) > 3 * 1024 * 1024:

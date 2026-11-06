@@ -212,14 +212,6 @@ static NSCalendar *GRCalendar(void) {
   return [NSString stringWithFormat:@"%ld/%ld %@", (long)c.day, (long)c.month, time];
 }
 
-+ (NSString *)presenceText:(NSDictionary *)entity connected:(BOOL)connected {
-  NSString *state = GRStr(entity[@"state"]);
-  if(!connected || ![self isOk:entity] || !state) { return [self stateTextForEntity:entity connected:connected demo:NO]; }
-  if([state isEqualToString:@"home"]) { return @"A casa"; }
-  if([state isEqualToString:@"not_home"]) { return @"Fora"; }
-  return state;
-}
-
 + (NSString *)climateTime:(NSString *)isoTime {
   NSDate *date = GRParseISODate(isoTime);
   if(!date) { return @"Hora desconeguda"; }

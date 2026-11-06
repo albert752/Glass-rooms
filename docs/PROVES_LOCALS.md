@@ -130,3 +130,15 @@ No comprovat: Alarmo, la càmera, la sirena ni els sensors reals; les ordres d'a
 | Previsualització Mac Catalyst a 1024×768 i 768×1024 | Corbes de temperatura i humitat a la portada; navegació Estances, Clima, Seguretat, Resum; el lliscament cap a l'esquerra des d'Estances obre Clima |
 
 No comprovat: el lliscament amb el dit a l'iPad real; a la previsualització s'ha cridat directament el mètode del gest.
+
+## Revisió 1.1.12 — càmera i disposició de la seguretat
+
+6 de novembre de 2026.
+
+| Comprovació executada | Resultat |
+|---|---|
+| `python3 -m unittest discover -s tests` i `ios/scripts/test.sh` | 54 proves i 47 comprovacions natives superades |
+| `ios/scripts/build.sh` | IPA 1.1.12 compilada amb l'SDK d'iOS 9.3 |
+| Previsualització Mac Catalyst a 1024×768 i 768×1024 amb un Home Assistant simulat | Portes i finestres a sota de l'alarma, càmera al costat (a sota en vertical), sense sirena ni persones. Amb la càmera fallant, el requadre mostra «SENSE IMATGE» i el motiu amb l'estat HTTP de Home Assistant |
+
+No comprovat: la càmera real (`camera.cam_pt2_mainstream`) a través de Supervisor, ni que Home Assistant redueixi la imatge amb `width=1280`.

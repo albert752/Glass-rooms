@@ -27,11 +27,10 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSString *)shortNumber:(double)value;
 + (nullable NSDictionary *)alarmPanel:(NSArray *)entities;
 // Security page groups: alarm, cameras, openings, detections, sirens, sirenPower, people, batteries (arrays).
+// Sirens and people are grouped so they never land among the openings, but the page does not show them.
 + (NSDictionary<NSString *, NSArray *> *)securityGroups:(NSArray *)entities;
 // "ara", "fa 5 min", "fa 3 h", "ahir 21:04", "4/11 21:04"; nil without a date.
 + (nullable NSString *)agoText:(nullable NSString *)isoTime now:(NSDate *)now;
-// Person or tracker location in Catalan: "A casa", "Fora" or the zone name.
-+ (NSString *)presenceText:(NSDictionary *)entity connected:(BOOL)connected;
 + (NSString *)climateTime:(nullable NSString *)isoTime;
 + (nullable NSString *)attributeSummary:(NSDictionary *)entity live:(BOOL)live;
 + (NSString *)clockText:(NSDate *)date;

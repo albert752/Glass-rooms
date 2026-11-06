@@ -1,5 +1,5 @@
 name: Glass Rooms
-version: "1.1.11"
+version: "1.1.12"
 breaking_versions:
   - "1.0.11"
   - "1.1.0"
