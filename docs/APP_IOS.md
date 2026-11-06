@@ -12,7 +12,7 @@ Està pensat per a un iPad fix a la paret i llegit a distància.
   - l'estat de l'alarma o, si no n'hi ha cap, els llums encesos;
   - la corba de temperatura i, a sota, la d'humitat (des de 1.1.11), del primer sensor de cada tipus amb historial, amb el període triat a Clima (24 h per defecte).
 - **Navegació inferior:** Estances, Clima, Seguretat, Resum i Ajustos. Des de 1.1.11, lliscar el dit cap a l'esquerra o cap a la dreta passa a la pàgina següent o a l'anterior, en aquest ordre. No es llisca de pàgina si el dit comença sobre un control lliscant, un interruptor, la gràfica de clima o una tira de fitxes, ni amb un calaix obert. El tema (automàtic, dia o nit) només es tria a Ajustos (des de 1.1.9).
-- **Estances:** una fila per estança, amb un punt ambre si té llums encesos, la temperatura i un interruptor de llums. Tocar el nom obre el calaix de l'estança. Sota la llista hi ha «Encén tot» i «Apaga tot».
+- **Estances:** una fila per estança, amb un punt ambre si té llums encesos, la temperatura i un interruptor de llums. Tocar el nom obre el calaix de l'estança. Sota la llista hi ha «Encén tot» i «Apaga tot» i, des de 1.1.13, una tira amb les escenes (`scene.*` d'`entity_ids` amb `:turn_on` a `verified_actions`).
 - **Avisos:** les ordres de llums no mostren cap missatge en enviar-se ni quan funcionen; l'interruptor i l'estat actualitzat ja ho indiquen. Només apareix un avís si l'ordre falla o si s'ometen llums (des de 1.1.7).
 - **Clima (des de 1.1.8):** ocupa tota la pantalla i la columna del rellotge s'amaga. A dalt hi ha el període (6 h, 24 h, 7 dies, 1 mes) i una fitxa per sensor amb l'estança i la lectura actual. Sota hi ha el valor del punt triat en gran, amb el mínim, el màxim i la mitjana del període. La gràfica té eixos de valor i d'hora, i tocar-la o arrossegar-hi el dit mostra cada registre.
 - **Llums que no responen (des de 1.1.9):**
@@ -20,6 +20,8 @@ Està pensat per a un iPad fix a la paret i llegit a distància.
   - Home Assistant pot trigar minuts a adonar-se que un llum s'ha desconnectat, i aquest retard depèn de la integració. Mentrestant, si el llum no arriba a l'estat demanat 10 segons després d'una ordre, l'app el marca com a «No respon a les ordres» i n'atura els controls.
   - El bloqueig s'aixeca quan Home Assistant informa un estat nou, o al cap de 2 minuts.
   - Si es perden les actualitzacions en directe, l'estat es torna a llegir cada 8 segons.
+- **Bloqueig de la pantalla (des de 1.1.13):** a Ajustos es tria «Com iOS», 5, 15 o 30 minuts, 1 hora o «Mai». Una app no pot bloquejar l'iPad: manté la pantalla encesa mentre s'ha tocat dins del temps triat i després deixa fer al bloqueig automàtic d'iOS, que s'hi suma. Posa'l a 2 minuts a Configuració → Pantalla i brillantor. Qui tenia activat «Mantén la pantalla encesa» passa a «Mai».
+- **Emissors d'infrarojos i ràdio (des de 1.1.13):** un `remote.*` assignat a una estança mostra al calaix un botó per a cada línia de `remote_buttons` (vegeu [la instal·lació](INSTALLACIO.md)).
 - **Calaix lateral:** surt per la dreta. Cada dispositiu amb ordres d'encendre i apagar té un interruptor. La brillantor, la velocitat i el volum s'envien en deixar anar el control lliscant, sense botó «Aplica».
 - **Temes:** de nit, negre pur amb text ambre; de dia, paper càlid amb ambre torrat. El mode automàtic canvia a les 7 i a les 20 h.
 - **Orientació:** en horitzontal, el rellotge queda a l'esquerra i el contingut a la dreta. En vertical, el rellotge va a dalt i la llista a sota.
@@ -62,7 +64,7 @@ La pàgina mostra les entitats que hi ha a `entity_ids` i les classifica pel dom
 ```yaml
 entity_ids:
   - alarm_control_panel.alarmo
-  - camera.cam_pt2_mainstream
+  - camera.living_room_cam_pt2_mainstream
   - binary_sensor.cam_pt2_cell_motion_detection
   - binary_sensor.cam_pt2_person_detection
   - binary_sensor.sensor_porta_00
@@ -106,7 +108,7 @@ Conserva els llums i els sensors que ja tenies a `entity_ids`. Les ordres de l'a
 | Botó «Aplica» als controls lliscants | El valor s'envia en deixar anar el control. |
 | Targetes il·lustrades | Llista d'estances amb interruptor; sense il·lustracions. |
 | Tancar la sessió | No n'hi ha: per revocar l'accés, canvia `panel_pin`. |
-| — | Opció «Mantén la pantalla encesa» per a un iPad fix a la paret. |
+| — | Temps de bloqueig de la pantalla (des de 1.1.13; abans, «Mantén la pantalla encesa»). |
 | — | Fixació del certificat HTTPS per empremta SHA-256 si iOS no el reconeix. |
 
 ## 1. Prepara el servidor

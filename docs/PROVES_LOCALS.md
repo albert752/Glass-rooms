@@ -142,3 +142,15 @@ No comprovat: el lliscament amb el dit a l'iPad real; a la previsualització s'h
 | Previsualització Mac Catalyst a 1024×768 i 768×1024 amb un Home Assistant simulat | Portes i finestres a sota de l'alarma, càmera al costat (a sota en vertical), sense sirena ni persones. Amb la càmera fallant, el requadre mostra «SENSE IMATGE» i el motiu amb l'estat HTTP de Home Assistant |
 
 No comprovat: la càmera real (`camera.cam_pt2_mainstream`) a través de Supervisor, ni que Home Assistant redueixi la imatge amb `width=1280`.
+
+## Revisió 1.1.13 — escenes, emissor d'infrarojos i bloqueig de la pantalla
+
+6 de novembre de 2026.
+
+| Comprovació executada | Resultat |
+|---|---|
+| `python3 -m unittest discover -s tests` i `ios/scripts/test.sh` | 56 proves i 47 comprovacions natives superades. `remote_buttons` només envia les ordres configurades (`send_command` lliure i botons inexistents rebutjats); una escena en estat `unknown` s'activa |
+| `ios/scripts/build.sh` | IPA 1.1.13 compilada amb l'SDK d'iOS 9.3 |
+| Previsualització Mac Catalyst a 1024×768 amb un Home Assistant simulat | Tira d'escenes a Estances; calaix del menjador amb els botons de l'emissor; selector de bloqueig a Ajustos |
+
+No comprovat: les ordres reals de LocalTuya ni el bloqueig de la pantalla a l'iPad real (la previsualització Mac no s'apaga).

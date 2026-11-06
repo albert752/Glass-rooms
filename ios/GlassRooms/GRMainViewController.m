@@ -1,4 +1,5 @@
 #import "GRMainViewController.h"
+#import "GRScreenLock.h"
 #import "GRClimateChartView.h"
 #import "GRLogic.h"
 #import "GRPreferences.h"
@@ -741,6 +742,29 @@ static NSArray<NSString *> *GRPages(void) { return @[@"rooms", @"climate", @"sec
   else if(readyOn.count < lights.count || readyOff.count < lights.count) {
     [_viewFlow addView:[self note:[NSString stringWithFormat:@"Només es toquen els llums amb l’ordre verificada (%lu de %lu).",
                                    (unsigned long)MIN(readyOn.count, readyOff.count), (unsigned long)lights.count]] top:12];
+  }
+
+  // Scenes, one tap away.
+  NSArray *scenes = [GRLogic entities:self.model.entities inCategory:@"scenes"];
+  if(scenes.count) {
+    [_viewFlow addView:[self sectionLabel:@"ESCENES"] top:28];
+    GRWrapView *strip = [GRWrapView new];
+    strip.horizontalSpacing = 10;
+    NSString *reason = nil;
+    for(NSDictionary *scene in scenes) {
+      NSDictionary *control = nil;
+      for(id item in GRArray(scene[@"controls"]) ?: @[]) { if([GRDict(item)[@"action"] isEqual:@"turn_on"]) { control = item; } }
+      GRButton *button = [GRButton buttonWithTitle:GRStr(scene[@"name"]) ?: scene[@"entity_id"] style:GRButtonStyleAction handler:^(GRButton *b) {
+        [weakSelf sendAction:scene control:control value:nil code:nil];
+      }];
+      // A scene that was never activated reads "unknown" in Home Assistant and still works.
+      button.enabled = canCommand && [@[@"ok", @"unknown"] containsObject:GRStr(scene[@"status"]) ?: @""] && [control[@"enabled"] isEqual:@YES];
+      button.accessibilityLabel = [@"Activa l’escena " stringByAppendingString:GRStr(scene[@"name"]) ?: scene[@"entity_id"]];
+      if(!reason && control && ![control[@"enabled"] isEqual:@YES]) { reason = GRStr(control[@"reason"]); }
+      [strip addSubview:button];
+    }
+    [_viewFlow addView:strip top:10];
+    if(reason.length && self.model.connected) { [_viewFlow addView:[self note:reason] top:10]; }
   }
 }
 
@@ -1889,11 +1913,24 @@ static BOOL GRIsActiveState(NSString *domain, NSString *state) {
   [parent addView:section top:0];
   [parent addView:[GRRuleView ruleWithColor:t.line] top:0];
 
-  section = [self settingsSection:@"Pantalla"];
-  [section addView:[self switchRow:@"Mantén la pantalla encesa" on:preferences.keepAwake changed:^(BOOL on) {
-    [GRPreferences shared].keepAwake = on; [UIApplication sharedApplication].idleTimerDisabled = on;
-  }] top:8];
-  [section addView:[self note:@"Útil si l’iPad queda fix a la paret i connectat al carregador."] top:4];
+  section = [self settingsSection:@"Bloqueig de la pantalla"];
+  NSMutableArray *locks = [NSMutableArray array];
+  GRBlockView *lockGrid = [GRBlockView new];
+  for(NSArray *choice in @[@[@0, @"Com iOS"], @[@300, @"5 min"], @[@900, @"15 min"], @[@1800, @"30 min"], @[@3600, @"1 h"], @[@-1, @"Mai"]]) {
+    GRButton *button = [GRButton buttonWithTitle:choice[1] style:GRButtonStyleSegment handler:^(GRButton *b) {
+      [GRPreferences shared].screenLock = [choice[0] integerValue]; [GRScreenLock restart]; [weakSelf openSettings];
+    }];
+    button.selectedLook = preferences.screenLock == [choice[0] integerValue];
+    button.accessibilityTraits = UIAccessibilityTraitButton | (button.selectedLook ? UIAccessibilityTraitSelected : 0);
+    [lockGrid addSubview:button]; [locks addObject:button];
+  }
+  lockGrid.measure = ^CGFloat(CGFloat width) { return 46 * 2 + 8; };
+  lockGrid.layout = ^(UIView *view) {
+    CGFloat w = (view.bounds.size.width - 16) / 3;
+    for(NSUInteger i = 0; i < locks.count; i++) { [locks[i] setFrame:CGRectMake((i % 3) * (w + 8), (i / 3) * 54, w, 46)]; }
+  };
+  [section addView:lockGrid top:14];
+  [section addView:[self note:@"Temps sense tocar la pantalla abans que l’iPad s’apagui. Un cop passat, s’apaga amb el bloqueig automàtic d’iOS (Configuració → Pantalla i brillantor), que s’hi suma: posa’l a 2 minuts. «Mai» la manté encesa; útil si l’iPad és a la paret amb el carregador."] top:10];
   [parent addView:section top:0];
   [parent addView:[GRRuleView ruleWithColor:t.line] top:0];
 

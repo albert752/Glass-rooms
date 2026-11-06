@@ -1,5 +1,5 @@
 name: Glass Rooms
-version: "1.1.12"
+version: "1.1.13"
 breaking_versions:
   - "1.0.11"
   - "1.1.0"
@@ -31,6 +31,7 @@ options:
   allowed_networks: []
   verified_actions: []
   room_assignments: []
+  remote_buttons: []
   alarm_modes: []
   alarm_arm_code: unknown
   alarm_disarm_code: unknown
@@ -50,6 +51,8 @@ schema:
   verified_actions:
     - str
   room_assignments:
+    - str
+  remote_buttons:
     - str
   alarm_modes:
     - "list(alarm_arm_home|alarm_arm_away|alarm_arm_night|alarm_arm_vacation)"

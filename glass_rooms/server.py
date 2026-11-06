@@ -58,6 +58,8 @@ ACTION_NAMES = {
     "media_player": {"turn_on", "turn_off", "media_play", "media_pause", "volume_set"},
     # The panel can only silence a siren; turn_on is listed so a verified entry never exposes it.
     "siren": {"turn_on", "turn_off"},
+    # Remotes only send the commands listed in remote_buttons, never a free command.
+    "remote": {"send_command"},
 }
 ATTRS = {
     "light": {"supported_features", "supported_color_modes", "brightness", "color_mode", "friendly_name",
@@ -76,6 +78,7 @@ ATTRS = {
     # Cameras never expose entity_picture or access_token: images go through /api/camera only.
     "camera": {"friendly_name"},
     "siren": {"friendly_name"},
+    "remote": {"friendly_name"},
     "person": {"friendly_name"},
     "device_tracker": {"friendly_name", "source_type"},
 }
@@ -142,6 +145,7 @@ class Settings:
         self.demo_lights = demo_lights
         self.verified = set()
         self.room_assignments = {}
+        self.remote_buttons = {}
         self.alarm_modes = set()
         self.arm_code = "unknown"
         self.disarm_code = "unknown"
@@ -168,7 +172,7 @@ class Settings:
         if not isinstance(options, dict):
             raise ValueError("Les opcions han de ser un objecte JSON.")
         known = {"panel_pin", "app_token", "allowed_hosts", "allowed_networks", "verified_actions", "room_assignments",
-                 "light_entity_ids", "entity_ids",
+                 "light_entity_ids", "entity_ids", "remote_buttons",
                  "alarm_modes", "alarm_arm_code", "alarm_disarm_code", "tls_certfile", "tls_keyfile"}
         if set(options) - known:
             raise ValueError("Hi ha opcions desconegudes; reviseu la configuració.")
@@ -223,6 +227,16 @@ class Settings:
             if not separator or entity_id not in self.by_id or room not in ROOM_IDS or entity_id in self.room_assignments:
                 raise ValueError("room_assignments conté una assignació no admesa o duplicada.")
             self.room_assignments[entity_id] = room
+        # "remote.x:device:command:Label": one button that sends a learned command (LocalTuya, Broadlink...).
+        for item in list_option(options, "remote_buttons"):
+            parts = item.split(":", 3)
+            if (len(parts) != 4 or self.by_id.get(parts[0], {}).get("domain") != "remote"
+                    or any(not re.fullmatch(r"[^:\x00-\x1f]{1,64}", part.strip()) for part in parts[1:])):
+                raise ValueError("remote_buttons ha de tenir el format remote.entitat:dispositiu:ordre:Etiqueta.")
+            buttons = self.remote_buttons.setdefault(parts[0], [])
+            if len(buttons) >= 24:
+                raise ValueError("Cada remote admet com a màxim 24 botons a remote_buttons.")
+            buttons.append(tuple(part.strip() for part in parts[1:]))
         self.alarm_modes = set(list_option(options, "alarm_modes"))
         if not self.alarm_modes <= set(ARM_FEATURES):
             raise ValueError("alarm_modes conté un mode no admès.")
@@ -468,12 +482,12 @@ def controls_for(item, state, attrs, services, settings):
     features = attrs.get("supported_features", 0)
     features = features if isinstance(features, int) and not isinstance(features, bool) and features >= 0 else 0
 
-    def add(action, label, kind="button", service=None, field=None, blocker=None, **extra):
+    def add(action, label, kind="button", service=None, field=None, blocker=None, verify=None, **extra):
         service = service or action
         if not service_exists(services, domain, service) or (field and not service_field(services, domain, service, field)):
             return
         reason = blocker
-        if not reason and entity_id + ":" + action not in settings.verified:
+        if not reason and entity_id + ":" + (verify or action) not in settings.verified:
             reason = "Pendent de prova real i d'autorització a verified_actions."
         controls.append(dict(action=action, label=label, kind=kind, enabled=not bool(reason), reason=reason, **extra))
 
@@ -501,6 +515,10 @@ def controls_for(item, state, attrs, services, settings):
         add("turn_on", "Activar escena")
     elif domain == "siren" and state in {"on", "off"}:
         add("turn_off", "Atura la sirena")
+    elif domain == "remote" and state in {"on", "off"}:
+        # Each configured button is verified once for the whole remote with remote.x:send_command.
+        for index, (device, command, label) in enumerate(settings.remote_buttons.get(entity_id, []), 1):
+            add("command_" + str(index), label, service="send_command", verify="send_command", device=device, command=command)
     elif domain == "alarm_control_panel":
         if state not in {"disarmed", "armed_home", "armed_away", "armed_night", "armed_vacation",
                          "armed_custom_bypass", "pending", "arming", "disarming", "triggered"}:
@@ -586,7 +604,8 @@ def entities_for(states, services, settings, connected):
                 friendly_name = entity["attributes"].get("friendly_name")
                 if short_string(friendly_name, 120) and friendly_name.strip():
                     entity["name"] = friendly_name.strip()
-                if entity["status"] == "ok":
+                # Home Assistant reports "unknown" for a scene until its first activation.
+                if entity["status"] == "ok" or (item["domain"] == "scene" and entity["status"] == "unknown"):
                     entity["controls"] = controls_for(item, value, entity["attributes"], services, settings)
         entities.append(entity)
     return entities
@@ -618,6 +637,9 @@ def action_payload(entity, body):
         payload["operation_mode"] = body["value"]
     elif "value" in body:
         raise PublicError("Aquesta acció no admet un valor addicional.")
+    if entity["domain"] == "remote":
+        service = "send_command"
+        payload.update(device=control["device"], command=control["command"])
     if control["kind"] == "alarm":
         if control.get("requires_code"):
             code = body.get("code")

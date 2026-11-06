@@ -1,10 +1,12 @@
 # Glass Rooms
 
-## Revisió 1.1.12
+## Revisió 1.1.13
 
 **Migració des de 1.0.x:** a les opcions privades de Glass Rooms, elimina `panel_password` i configura `panel_pin` amb un PIN nou de 6 a 8 dígits. Desa les opcions i reinicia l'aplicació. La contrasenya antiga no es converteix automàticament en PIN; si falta `panel_pin`, el servidor no arrenca. L'accés al panell es fa amb el teclat numèric de la pàgina. El PIN d'alarma, si n'hi ha, continua sent independent.
 
-**Novetat 1.1.12:** a la pàgina de **Seguretat** de l'app per a iPad, la llista de portes i finestres és a sota de l'alarma i la càmera al costat. Ja no hi surten la sirena ni qui és a casa. El servidor demana a Home Assistant la imatge de la càmera reduïda a 1280 px d'amplada i l'espera fins a 15 s; si no arriba, l'app mostra el motiu sobre la imatge.
+**Novetat 1.1.13:** a l'app per a iPad, la pàgina Estances té una tira d'**escenes** sota «Encén tot» i «Apaga tot». Un emissor d'infrarojos o de ràdio (`remote.*`, per exemple de LocalTuya) pot tenir botons propis amb la nova opció `remote_buttons`, i surten a la seva estança. A Ajustos es tria el temps sense tocar la pantalla abans que l'iPad s'apagui. Les escenes que encara no s'han activat mai (estat `unknown`) ja es poden activar.
+
+**1.1.12:** a la pàgina de **Seguretat** de l'app per a iPad, la llista de portes i finestres és a sota de l'alarma i la càmera al costat. Ja no hi surten la sirena ni qui és a casa. El servidor demana a Home Assistant la imatge de la càmera reduïda a 1280 px d'amplada i l'espera fins a 15 s; si no arriba, l'app mostra el motiu sobre la imatge.
 
 **1.1.11:** a l'app per a iPad, la portada mostra la corba de la temperatura i, a sota, la de la humitat. L'ordre de les pàgines és Estances, Clima, Seguretat i Resum, i es pot passar d'una a l'altra lliscant el dit cap a l'esquerra o cap a la dreta.
 

@@ -26,8 +26,14 @@ static NSString *const GRFallbackTokenKey = @"glass-rooms-token-fallback";
   return [@[@"auto", @"day", @"night"] containsObject:theme] ? theme : @"auto";
 }
 - (void)setTheme:(NSString *)value { [[self defaults] setObject:value forKey:@"glass-rooms-theme"]; }
-- (BOOL)keepAwake { return [[self defaults] boolForKey:@"glass-rooms-keep-awake"]; }
-- (void)setKeepAwake:(BOOL)value { [[self defaults] setBool:value forKey:@"glass-rooms-keep-awake"]; }
+- (NSInteger)screenLock {
+  // Before 1.1.13 there was only a keep-awake switch: on means never lock.
+  id stored = [[self defaults] objectForKey:@"glass-rooms-screen-lock"];
+  if(!stored) { return [[self defaults] boolForKey:@"glass-rooms-keep-awake"] ? -1 : 0; }
+  NSInteger value = [[self defaults] integerForKey:@"glass-rooms-screen-lock"];
+  return value >= -1 && value <= 4 * 3600 ? value : 0;
+}
+- (void)setScreenLock:(NSInteger)value { [[self defaults] setInteger:value forKey:@"glass-rooms-screen-lock"]; }
 
 - (NSDictionary *)keychainQuery {
   return @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,

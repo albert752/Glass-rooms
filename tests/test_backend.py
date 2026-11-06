@@ -315,6 +315,31 @@ class ActionTests(unittest.TestCase):
         self.assertIn("pendent", result["message"])
         self.assertEqual(self.fake.calls, [("light", "turn_on", {"entity_id": LIGHT, "brightness": 160})])
 
+    def test_remote_buttons_send_only_configured_commands(self):
+        remote = "remote.test_ir"
+        options = config(entity_ids=[remote], remote_buttons=[remote + ":llum menjador:encendre:Encendre",
+                                                              remote + ":llum menjador:apagar:Apagar"])
+        fake = FakeHA(raw(remote), services("remote", send_command=["device", "command", "num_repeats"]))
+        unverified = entity(remote, Settings(options), fake.states, fake.available)
+        self.assertEqual([(c["label"], c["enabled"]) for c in unverified["controls"]], [("Encendre", False), ("Apagar", False)])
+        app = App(Settings(dict(options, verified_actions=[remote + ":send_command"])), fake)
+        app.action({"entity_id": remote, "action": "command_2"})
+        self.assertEqual(fake.calls, [("remote", "send_command", {"entity_id": remote, "device": "llum menjador", "command": "apagar"})])
+        # A free send_command or an unlisted button is never accepted.
+        for action in ["send_command", "command_3"]:
+            with self.subTest(action=action), self.assertRaises(PublicError):
+                app.action({"entity_id": remote, "action": action})
+        for bad in ["remote.test_ir:dev:cmd", "light.test_light:dev:cmd:Etiqueta", "remote.test_ir::cmd:Etiqueta"]:
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                Settings(config(entity_ids=[remote], remote_buttons=[bad]))
+
+    def test_never_activated_scene_can_be_activated(self):
+        scene = "scene.test_cozy"
+        fake = FakeHA(raw(scene, "unknown"), services("scene", turn_on=[]))
+        app = App(Settings(config(entity_ids=[scene], verified_actions=[scene + ":turn_on"])), fake)
+        app.action({"entity_id": scene, "action": "turn_on"})
+        self.assertEqual(fake.calls, [("scene", "turn_on", {"entity_id": scene})])
+
     def test_lights_action_batches_after_checking_every_light(self):
         other = "light.test_other"
         settings = Settings(config(light_entity_ids=[LIGHT, other],

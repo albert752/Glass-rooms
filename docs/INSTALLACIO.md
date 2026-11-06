@@ -80,6 +80,7 @@ A la pestanya **Configuració** de Glass Rooms:
 | `allowed_networks` | La xarxa CIDR real de casa, o IPs concretes `/32` amb reserva DHCP. No es pot deduir la màscara només de l'adreça `ADREÇA_HA`. Consulta-la al router. |
 | `verified_actions` | Mantén `[]` fins a completar les proves. Després, afegeix `entity_id:servei`; només es mostra si Home Assistant publica el servei per aquell domini. |
 | `room_assignments` | Mantén `[]` fins a confirmar ubicacions. Afegeix `entity_id:habitacio` per situar una entitat a una estança. |
+| `remote_buttons` | Opcional. Botons per a un emissor `remote.*` amb ordres apreses (LocalTuya, Broadlink…), un per línia: `remote.entitat:dispositiu:ordre:Etiqueta`. Dispositiu i ordre són els noms que vas fer servir en aprendre el codi. Cal també `remote.entitat:send_command` a `verified_actions`, i l'emissor a `entity_ids`. |
 | `alarm_modes` | Mantén `[]` fins a revisar els modes habilitats d'Alarmo. |
 | `alarm_arm_code`, `alarm_disarm_code` | Mantén `unknown` fins a confirmar la política de codi. No són camps per escriure el PIN. |
 | `tls_certfile`, `tls_keyfile` | Noms de fitxer a `/ssl` per HTTPS, o buits si has triat HTTP amb els límits anteriors. |
