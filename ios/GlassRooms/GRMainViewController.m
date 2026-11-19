@@ -15,6 +15,8 @@ static NSString *const GRVersion = @GR_VERSION;
 #pragma mark - Small views
 
 // Square icon button of the bottom navigation; the active one gets an accent border.
+// Nine buttons (52 pt, 8 pt apart) still end left of the landscape content column.
+static const CGFloat GRNavSize = 52, GRNavGap = 8;
 @interface GRNavButton : UIControl
 @property (nonatomic, copy) NSString *destination;
 @property (nonatomic, strong) UIImageView *icon;
@@ -23,7 +25,7 @@ static NSString *const GRVersion = @GR_VERSION;
 
 @implementation GRNavButton
 - (instancetype)initWithIcon:(NSString *)icon destination:(NSString *)destination accessibility:(NSString *)accessibility {
-  if((self = [super initWithFrame:CGRectMake(0, 0, 56, 56)])) {
+  if((self = [super initWithFrame:CGRectMake(0, 0, GRNavSize, GRNavSize)])) {
     _destination = destination;
     _icon = GRIconView(icon, NO, [GRTheme current].muted);
     _icon.userInteractionEnabled = NO;
@@ -338,7 +340,8 @@ static UIView *GRDot(BOOL lit) {
   for(UIView *view in @[_clock, _date, _spark, _sparkCaption, _status]) { [self.view addSubview:view]; }
 
   NSArray *items = @[@[@"home", @"rooms", @"Estances"], @[@"thermometer", @"climate", @"Temperatura i humitat"],
-                     @[@"fan", @"devices", @"Aparells: escalfador, ventiladors i comandaments"], @[@"spark", @"energy", @"Preu de la llum"],
+                     @[@"water", @"heater", @"Escalfador"], @[@"fan", @"fans", @"Ventiladors"], @[@"remote", @"remotes", @"Comandaments"],
+                     @[@"spark", @"energy", @"Preu de la llum"],
                      @[@"shield", @"security", @"Seguretat"], @[@"overview", @"overview", @"Resum de casa"]];
   for(NSArray *item in items) {
     GRNavButton *button = [[GRNavButton alloc] initWithIcon:item[0] destination:item[1] accessibility:item[2]];
@@ -438,12 +441,12 @@ static UIView *GRDot(BOOL lit) {
   }
   CGFloat statsBottom = y + 18 + 46;
 
-  CGFloat navY = size.height - (landscape ? 32 : 28) - 56;
+  CGFloat navY = size.height - (landscape ? 32 : 28) - GRNavSize;
   NSMutableArray *nav = [_navButtons mutableCopy];
   [nav addObject:_settingsButton];
-  CGFloat navWidth = nav.count * 56 + (nav.count - 1) * 12;
+  CGFloat navWidth = nav.count * GRNavSize + (nav.count - 1) * GRNavGap;
   CGFloat navX = landscape ? side : (size.width - navWidth) / 2;
-  for(GRNavButton *button in nav) { button.frame = CGRectMake(navX, navY, 56, 56); navX += 56 + 12; }
+  for(GRNavButton *button in nav) { button.frame = CGRectMake(navX, navY, GRNavSize, GRNavSize); navX += GRNavSize + GRNavGap; }
 
   if(landscape) {
     CGFloat leftWidth = MIN(470, floor(size.width * .46));
@@ -830,7 +833,9 @@ static NSString *GRDuration(NSInteger seconds) {
   if([_currentView isEqualToString:@"climate"]) { [self renderClimate]; }
   else if([_currentView isEqualToString:@"security"]) { [self renderSecurity]; }
   else if([_currentView isEqualToString:@"overview"]) { [self renderOverview]; }
-  else if([_currentView isEqualToString:@"devices"]) { [self renderDevices]; }
+  else if([_currentView isEqualToString:@"heater"]) { [self renderHeater]; }
+  else if([_currentView isEqualToString:@"fans"]) { [self renderFans]; }
+  else if([_currentView isEqualToString:@"remotes"]) { [self renderRemotes]; }
   else if([_currentView isEqualToString:@"energy"]) { [self renderEnergy]; }
   else if([_currentView isEqualToString:@"settings"]) { [self renderSettings]; }
   else { [self renderRooms]; }
@@ -991,7 +996,8 @@ static NSString *GRDuration(NSInteger seconds) {
 - (void)summaryTapped:(UIControl *)row {
   NSString *category = row.accessibilityIdentifier;
   if([category isEqualToString:@"climate"] || [category isEqualToString:@"security"] || [category isEqualToString:@"energy"]) { [self navigate:category]; return; }
-  if([category isEqualToString:@"water"] || [category isEqualToString:@"fans"]) { [self navigate:@"devices"]; return; }
+  if([category isEqualToString:@"water"]) { [self navigate:@"heater"]; return; }
+  if([category isEqualToString:@"fans"]) { [self navigate:@"fans"]; return; }
   NSDictionary *titles = @{@"lights": @"Il·luminació", @"security": @"Seguretat", @"water": @"Aigua calenta", @"media": @"Música i televisió",
                            @"fans": @"Ventiladors", @"switches": @"Interruptors", @"scenes": @"Escenes", @"other": @"Altres dispositius", @"weather": @"Temps exterior"};
   [self openCategory:category title:titles[category] ?: @"Dispositius"];
@@ -1614,7 +1620,8 @@ static NSString *GRAttributeValue(NSString *key, id value, NSString *unit) {
   return [text isEqualToString:@"on"] ? @"Activat" : ([text isEqualToString:@"off"] ? @"Desactivat" : text);
 }
 
-- (GRFlowView *)heaterCard:(NSDictionary *)heater {
+// The heater's controls and, in a second card, everything it reports.
+- (NSArray<GRFlowView *> *)heaterCards:(NSDictionary *)heater {
   GRTheme *t = [GRTheme current];
   __weak GRMainViewController *weakSelf = self;
   NSDictionary *a = GRDict(heater[@"attributes"]) ?: @{};
@@ -1740,6 +1747,7 @@ static NSString *GRAttributeValue(NSString *key, id value, NSString *unit) {
   if(ok) { for(NSString *reason in reasons) { [card addView:[self note:reason] top:8]; } }
 
   // Everything else the heater reports.
+  GRFlowView *info = [self card:@"INFORMACIÓ" note:GRShortName(heater, @[])];
   if(ok) {
     NSDictionary *labels = @{@"current_temperature": @"Temperatura actual", @"temperature": @"Temperatura objectiu",
                              @"target_temp_high": @"Objectiu màxim", @"target_temp_low": @"Objectiu mínim", @"min_temp": @"Mínim admès",
@@ -1751,13 +1759,12 @@ static NSString *GRAttributeValue(NSString *key, id value, NSString *unit) {
     for(NSString *key in [[a allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
       if(![keys containsObject:key] && ![skip containsObject:key] && a[key] != [NSNull null] && ![a[key] isKindOfClass:[NSArray class]]) { [keys addObject:key]; }
     }
-    if(keys.count) {
-      [card addView:[self sectionLabel:@"TOTA LA INFORMACIÓ"] top:22];
-      for(NSString *key in keys) {
-        NSString *label = labels[key];
-        if(!label) { label = [[key stringByReplacingOccurrencesOfString:@"_" withString:@" "] stringByReplacingCharactersInRange:NSMakeRange(0, 1) withString:[[key substringToIndex:1] uppercaseString]]; }
-        [card addView:[self infoRow:label value:GRAttributeValue(key, a[key], unit) issue:NO] top:0];
-      }
+    BOOL first = YES;
+    for(NSString *key in keys) {
+      NSString *label = labels[key];
+      if(!label) { label = [[key stringByReplacingOccurrencesOfString:@"_" withString:@" "] stringByReplacingCharactersInRange:NSMakeRange(0, 1) withString:[[key substringToIndex:1] uppercaseString]]; }
+      [info addView:[self infoRow:label value:GRAttributeValue(key, a[key], unit) issue:NO] top:first ? 10 : 0];
+      first = NO;
     }
   }
   // Sensors of the same device (sensor.<heater>_..., switch.<heater>_...).
@@ -1768,76 +1775,118 @@ static NSString *GRAttributeValue(NSString *key, id value, NSString *unit) {
     if(objectId.length && ![entity[@"entity_id"] isEqual:entityId] && [other hasPrefix:[objectId stringByAppendingString:@"_"]]) { [related addObject:entity]; }
   }
   if(related.count) {
-    [card addView:[self sectionLabel:@"SENSORS DE L’ESCALFADOR"] top:22];
+    [info addView:[self sectionLabel:@"SENSORS DE L’ESCALFADOR"] top:22];
     for(NSDictionary *entity in related) {
       BOOL fine = [entity[@"status"] isEqual:@"ok"] && self.model.connected;
-      [card addView:[self infoRow:GRShortName(entity, @[]) value:[GRLogic stateTextForEntity:entity connected:self.model.connected demo:self.model.demo] issue:!fine] top:0];
+      [info addView:[self infoRow:GRShortName(entity, @[]) value:[GRLogic stateTextForEntity:entity connected:self.model.connected demo:self.model.demo] issue:!fine] top:0];
     }
   }
-  return card;
+  return info.subviews.count > 1 ? @[card, info] : @[card];
 }
 
-- (GRFlowView *)remoteCard:(NSDictionary *)remote {
+// One card per device of a transmitter (remote_buttons remote.x:device:command:Label), so the TV and the
+// ceiling light learnt on the same IR/RF emitter get their own remote.
+- (NSArray<GRFlowView *> *)remoteCards:(NSDictionary *)remote {
   GRTheme *t = [GRTheme current];
   __weak GRMainViewController *weakSelf = self;
   BOOL canCommand = self.model.connected && !self.model.preview && !self.model.busy;
-  GRFlowView *card = [self card:@"COMANDAMENT" note:GRShortName(remote, @[])];
-  NSMutableArray *buttons = [NSMutableArray array];
+  NSMutableArray *devices = [NSMutableArray array];
+  NSMutableDictionary<NSString *, NSMutableArray *> *buttons = [NSMutableDictionary dictionary];
   NSString *reason = nil;
   for(id item in GRArray(remote[@"controls"]) ?: @[]) {
     NSDictionary *control = GRDict(item);
     if(![GRStr(control[@"action"]) hasPrefix:@"command_"]) { continue; }
+    NSString *device = GRStr(control[@"device"]) ?: @"";
+    if(!buttons[device]) { buttons[device] = [NSMutableArray array]; [devices addObject:device]; }
     GRButton *button = [GRButton buttonWithTitle:GRStr(control[@"label"]) style:GRButtonStyleOutline handler:^(GRButton *b) {
       [weakSelf sendAction:remote control:control value:nil code:nil];
     }];
     button.enabled = canCommand && [control[@"enabled"] isEqual:@YES];
     if(!reason && ![control[@"enabled"] isEqual:@YES]) { reason = GRStr(control[@"reason"]); }
-    [buttons addObject:button];
+    [buttons[device] addObject:button];
   }
-  if(buttons.count) {
+  NSString *name = GRShortName(remote, @[]);
+  if(!devices.count) {
+    GRFlowView *card = [self card:@"COMANDAMENT" note:name];
+    if(![remote[@"status"] isEqual:@"ok"] || !self.model.connected) {
+      [card addView:GRWrappingLabel([GRLogic stateTextForEntity:remote connected:self.model.connected demo:self.model.demo], GRFont(15, UIFontWeightRegular), t.issue, 0) top:12];
+    } else {
+      [card addView:[self note:@"Afegeix els botons a remote_buttons (remote.entitat:dispositiu:ordre:Etiqueta) i remote.entitat:send_command a verified_actions."] top:12];
+    }
+    return @[card];
+  }
+  NSMutableArray *cards = [NSMutableArray array];
+  for(NSString *device in devices) {
+    NSArray *keys = buttons[device];
+    NSString *title = device.length ? [[device stringByReplacingOccurrencesOfString:@"_" withString:@" "] uppercaseString] : @"COMANDAMENT";
+    GRFlowView *card = [self card:title note:name];
     GRBlockView *grid = [GRBlockView new];
-    for(UIView *button in buttons) { [grid addSubview:button]; }
+    for(UIView *button in keys) { [grid addSubview:button]; }
     NSUInteger (^columns)(CGFloat) = ^NSUInteger(CGFloat width) { return MAX(2, MIN(5, (NSUInteger)floor((width + 10) / 120))); };
-    grid.measure = ^CGFloat(CGFloat width) { NSUInteger rows = (buttons.count + columns(width) - 1) / columns(width); return rows * 64 - 10; };
+    grid.measure = ^CGFloat(CGFloat width) { NSUInteger rows = (keys.count + columns(width) - 1) / columns(width); return rows * 64 - 10; };
     grid.layout = ^(UIView *view) {
       NSUInteger c = columns(view.bounds.size.width);
       CGFloat w = floor((view.bounds.size.width - 10 * (c - 1)) / c);
-      for(NSUInteger i = 0; i < buttons.count; i++) { [buttons[i] setFrame:CGRectMake((i % c) * (w + 10), (i / c) * 64, w, 54)]; }
+      for(NSUInteger i = 0; i < keys.count; i++) { [keys[i] setFrame:CGRectMake((i % c) * (w + 10), (i / c) * 64, w, 54)]; }
     };
     [card addView:grid top:14];
     if(reason.length && self.model.connected) { [card addView:[self note:reason] top:10]; }
-  } else if(![remote[@"status"] isEqual:@"ok"] || !self.model.connected) {
-    [card addView:GRWrappingLabel([GRLogic stateTextForEntity:remote connected:self.model.connected demo:self.model.demo], GRFont(15, UIFontWeightRegular), t.issue, 0) top:12];
-  } else {
-    [card addView:[self note:@"Afegeix els botons a remote_buttons (remote.entitat:dispositiu:ordre:Etiqueta) i remote.entitat:send_command a verified_actions."] top:12];
+    [cards addObject:card];
   }
-  return card;
+  return cards;
 }
 
-- (void)renderDevices {
-  NSArray *entities = self.model.entities;
-  NSMutableArray *heaters = [NSMutableArray array], *fans = [NSMutableArray array], *remotes = [NSMutableArray array];
-  for(NSDictionary *entity in entities) {
-    NSString *domain = GRStr(entity[@"domain"]);
-    if([domain isEqualToString:@"water_heater"]) { [heaters addObject:entity]; }
-    else if([domain isEqualToString:@"fan"]) { [fans addObject:entity]; }
-    else if([domain isEqualToString:@"remote"]) { [remotes addObject:entity]; }
+- (NSArray<NSDictionary *> *)entitiesInDomain:(NSString *)domain {
+  NSMutableArray *result = [NSMutableArray array];
+  for(NSDictionary *entity in self.model.entities) { if([GRStr(entity[@"domain"]) isEqualToString:domain]) { [result addObject:entity]; } }
+  return result;
+}
+
+// Cards side by side in landscape (two columns, filled alternately), one below the other in portrait.
+- (void)addCards:(NSArray<UIView *> *)cards {
+  if([self landscape] && cards.count > 1) {
+    NSMutableArray *left = [NSMutableArray array], *right = [NSMutableArray array];
+    for(NSUInteger i = 0; i < cards.count; i++) { [(i % 2 ? right : left) addObject:cards[i]]; }
+    [_viewFlow addView:[self columns:@[left, right] gap:16] top:16];
+  } else {
+    for(UIView *card in cards) { [_viewFlow addView:card top:16]; }
   }
-  [_viewFlow addView:[self pageTitle:@"Aparells"] top:0 height:52];
-  NSMutableArray *left = [NSMutableArray array], *right = [NSMutableArray array];
-  for(NSDictionary *heater in heaters) { [left addObject:[self heaterCard:heater]]; }
-  if(fans.count) {
-    GRFlowView *card = [self card:@"VENTILADORS" note:@""];
-    [self addEntities:fans to:card];
-    [(left.count ? right : left) addObject:card];
+}
+
+- (void)renderHeater {
+  [_viewFlow addView:[self pageTitle:@"Escalfador"] top:0 height:52];
+  NSMutableArray *cards = [NSMutableArray array];
+  for(NSDictionary *heater in [self entitiesInDomain:@"water_heater"]) { [cards addObjectsFromArray:[self heaterCards:heater]]; }
+  if(!cards.count) { [_viewFlow addView:[self note:@"Afegeix l’escalfador (water_heater.*) a entity_ids, i els seus sensors si vols veure’ls aquí."] top:16]; return; }
+  [self addCards:cards];
+}
+
+// One card per fan, with the light of the same name when there is one (CREATE ceiling fans with a light).
+- (void)renderFans {
+  [_viewFlow addView:[self pageTitle:@"Ventiladors"] top:0 height:52];
+  NSArray *lights = [self entitiesInDomain:@"light"];
+  NSMutableArray *cards = [NSMutableArray array];
+  for(NSDictionary *fan in [self entitiesInDomain:@"fan"]) {
+    NSString *objectId = [GRStr(fan[@"entity_id"]) componentsSeparatedByString:@"."].lastObject;
+    NSMutableArray *items = [NSMutableArray arrayWithObject:fan];
+    for(NSDictionary *light in lights) {
+      if([[GRStr(light[@"entity_id"]) componentsSeparatedByString:@"."].lastObject isEqualToString:objectId]) { [items addObject:light]; }
+    }
+    NSString *room = GRStr([GRLogic roomWithId:GRStr(fan[@"room"]) ?: @""][@"name"]);
+    GRFlowView *card = [self card:room ? room.uppercaseString : @"VENTILADOR" note:GRShortName(fan, @[])];
+    [self addEntities:items to:card];
+    [cards addObject:card];
   }
-  for(NSDictionary *remote in remotes) { [(left.count ? right : left) addObject:[self remoteCard:remote]]; }
-  if(!left.count) {
-    [_viewFlow addView:[self note:@"Afegeix a entity_ids l’escalfador (water_heater.*), els ventiladors (fan.*) i els emissors d’infrarojos o ràdio (remote.*) per controlar-los des d’aquí."] top:16];
-    return;
-  }
-  if([self landscape] && right.count) { [_viewFlow addView:[self columns:@[left, right] gap:16] top:16]; }
-  else { for(UIView *card in [left arrayByAddingObjectsFromArray:right]) { [_viewFlow addView:card top:16]; } }
+  if(!cards.count) { [_viewFlow addView:[self note:@"Afegeix els ventiladors (fan.*) a entity_ids. Si no publiquen percentage_step, indica’n les velocitats a fan_speeds (fan.entitat:6)."] top:16]; return; }
+  [self addCards:cards];
+}
+
+- (void)renderRemotes {
+  [_viewFlow addView:[self pageTitle:@"Comandaments"] top:0 height:52];
+  NSMutableArray *cards = [NSMutableArray array];
+  for(NSDictionary *remote in [self entitiesInDomain:@"remote"]) { [cards addObjectsFromArray:[self remoteCards:remote]]; }
+  if(!cards.count) { [_viewFlow addView:[self note:@"Afegeix els emissors d’infrarojos o ràdio (remote.*) a entity_ids i els seus botons a remote_buttons."] top:16]; return; }
+  [self addCards:cards];
 }
 
 #pragma mark - Energy page (PVPC electricity price)

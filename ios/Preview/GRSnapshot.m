@@ -13,14 +13,6 @@ static void GRSave(NSString *name) {
   [UIImagePNGRepresentation(image) writeToFile:[directory stringByAppendingPathComponent:[name stringByAppendingString:@".png"]] atomically:YES];
 }
 
-static void GRScrollToEnd(UIView *view) {
-  if([view isKindOfClass:[UIScrollView class]] && ((UIScrollView *)view).scrollEnabled && view.bounds.size.width > 600) {
-    UIScrollView *scroll = (UIScrollView *)view;
-    [scroll setContentOffset:CGPointMake(0, MAX(0, scroll.contentSize.height + scroll.contentInset.bottom - scroll.bounds.size.height)) animated:NO];
-  }
-  for(UIView *child in view.subviews) { GRScrollToEnd(child); }
-}
-
 static void GRRun(NSArray *steps, NSUInteger index) {
   if(index >= steps.count) { exit(0); }
   NSArray *step = steps[index];
@@ -52,8 +44,9 @@ __attribute__((constructor)) static void GRInstallSnapshots(void) {
       add(@"", ^{ [panel closeModal]; [panel setStyleChoice:look[0]]; [panel setThemeChoice:look[1]]; [panel navigate:@"rooms"]; });
       add([@"rooms" stringByAppendingString:suffix], ^{});
       add([@"climate" stringByAppendingString:suffix], ^{ [panel navigate:@"climate"]; });
-      add([@"devices" stringByAppendingString:suffix], ^{ [panel navigate:@"devices"]; });
-      add([@"devices-end" stringByAppendingString:suffix], ^{ GRScrollToEnd(window); });
+      add([@"heater" stringByAppendingString:suffix], ^{ [panel navigate:@"heater"]; });
+      add([@"fans" stringByAppendingString:suffix], ^{ [panel navigate:@"fans"]; });
+      add([@"remotes" stringByAppendingString:suffix], ^{ [panel navigate:@"remotes"]; });
       add([@"energy" stringByAppendingString:suffix], ^{ [panel navigate:@"energy"]; });
       add([@"settings" stringByAppendingString:suffix], ^{ [panel navigate:@"settings"]; });
       add([@"room-drawer" stringByAppendingString:suffix], ^{ [panel navigate:@"rooms"]; [panel openRoom:@"menjador"]; });

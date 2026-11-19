@@ -1,12 +1,14 @@
 # Glass Rooms
 
-## Revisió 1.2.0
+## Revisió 1.2.1
+
+**Novetat 1.2.1:** a l'app per a iPad, la pàgina Aparells es divideix en tres pàgines, cadascuna amb el seu botó a la navegació: **Escalfador** (els controls i, en una segona targeta, tota la informació i els sensors), **Ventiladors** (una targeta per ventilador, amb el llum del mateix nom, com els CREATE) i **Comandaments** (una targeta per cada dispositiu d'un emissor: per exemple, la tele i la llum de sostre apreses al mateix `remote.*` surten per separat). Els botons de la navegació són una mica més petits perquè n'hi càpiguen nou.
 
 **Migració des de 1.1.x:** el panell web ja no existeix. Glass Rooms és ara un servidor d'API per a l'[app nativa per a iPad](docs/APP_IOS.md), que és l'única manera d'accedir-hi. Les opcions no canvien: l'app s'identifica amb el mateix `panel_pin` (o `app_token`). Si obries el panell amb Safari, instal·la l'app i introdueix-hi l'adreça del panell i el PIN. Les rutes `/api/login` i `/api/logout`, la cookie de sessió i els fitxers HTML, CSS, JavaScript i SVG s'han retirat; qualsevol petició a l'API sense `Authorization: Bearer` es rebutja.
 
 **Migració des de 1.0.x:** a les opcions privades de Glass Rooms, elimina `panel_password` i configura `panel_pin` amb un PIN nou de 6 a 8 dígits. Desa les opcions i reinicia l'aplicació. Si falta `panel_pin`, el servidor no arrenca. El PIN d'alarma, si n'hi ha, continua sent independent.
 
-**Novetats 1.2.0 (app per a iPad):**
+**1.2.0 (app per a iPad):**
 
 - **Estil Jarvis:** a Ajustos es tria entre «Nit càlida» (negre i ambre) i «Jarvis» (pantalla de dades blau cian, amb graella, anells i resplendor). Tots dos tenen versió de dia i de nit, i totes les pàgines funcionen amb tots dos.
 - **Ajustos és una pàgina** sencera, amb Aparença, Pantalla i Connexió.

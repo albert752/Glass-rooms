@@ -173,3 +173,15 @@ Data: **19 de novembre de 2026**. Entorn: macOS amb Python 3.11 i Command Line T
 | Captures Mac Catalyst 1024×768 | Estances, clima, aparells, preu de la llum, ajustos, calaix d'estança i teclat de l'alarma, en Nit càlida i Jarvis, de dia i de nit, contra el servidor real amb un Home Assistant simulat |
 
 No comprovat: l'iPad real (apagat de la pantalla, brillantor, tipografia i rendiment de l'estil Jarvis a l'A5) ni les entitats reals de casa (escalfador, ventiladors CREATE, comandaments, PVPC i temps).
+
+## Revisió 1.2.1 — Escalfador, Ventiladors i Comandaments per separat
+
+Data: **19 de novembre de 2026**.
+
+| Comprovació executada | Resultat |
+|---|---|
+| `python3 -m unittest discover -s tests` | Totes les proves superades (servidor i app nativa) |
+| Compilació iOS 9 (`ios/scripts/build.sh`) | Correcta amb `-Werror` per a armv7 i arm64 |
+| Captures Mac Catalyst 1024×768 | Pàgines Escalfador (controls i informació en dues targetes), Ventiladors (una targeta per ventilador amb el seu llum) i Comandaments (tele i llum de sostre del mateix emissor en dues targetes), en els dos estils; els nou botons de navegació no toquen la columna d'estances |
+
+No comprovat a l'iPad real.
