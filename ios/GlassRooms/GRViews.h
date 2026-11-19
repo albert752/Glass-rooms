@@ -39,6 +39,11 @@ typedef NS_ENUM(NSInteger, GRButtonStyle) {
 - (void)addView:(UIView *)view top:(CGFloat)top fill:(BOOL)fill;
 - (void)addView:(UIView *)view top:(CGFloat)top height:(CGFloat)height;
 - (CGFloat)heightForWidth:(CGFloat)width;
+// Removes every child and returns them in order as @{view, top, height, fill} (for the page layout).
+- (NSArray<NSDictionary *> *)takeItems;
+// Splits the children into flow views of the same class and look, the first at most `first` points tall and
+// the others `rest`. Returns @[self] when everything fits. A single child taller than the limit gets its own piece.
+- (NSArray<GRFlowView *> *)splitForWidth:(CGFloat)width first:(CGFloat)first rest:(CGFloat)rest;
 @end
 
 // Inline children that wrap onto new lines, like inline-block buttons.

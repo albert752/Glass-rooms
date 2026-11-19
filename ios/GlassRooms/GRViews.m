@@ -174,6 +174,58 @@ static CGFloat GRFittingHeight(UIView *view, CGFloat width) {
 - (CGSize)sizeThatFits:(CGSize)size { return CGSizeMake(size.width, [self heightForWidth:size.width]); }
 - (void)layoutSubviews { [super layoutSubviews]; [self layoutForWidth:self.bounds.size.width apply:YES]; }
 
+- (NSArray<NSDictionary *> *)takeItems {
+  NSMutableArray *result = [NSMutableArray array];
+  for(GRFlowItem *item in _items) {
+    UIView *view = item.view;
+    if(!view) { continue; }
+    [view removeFromSuperview];
+    [result addObject:@{@"view": view, @"top": @(item.top), @"height": @(item.height), @"fill": @(item.fill)}];
+  }
+  [_items removeAllObjects];
+  return result;
+}
+
+- (GRFlowView *)emptyCopy {
+  GRFlowView *copy = [[self class] new];
+  copy.insets = self.insets;
+  copy.backgroundColor = self.backgroundColor;
+  copy.layer.cornerRadius = self.layer.cornerRadius;
+  copy.layer.borderWidth = self.layer.borderWidth;
+  copy.layer.borderColor = self.layer.borderColor;
+  copy.clipsToBounds = self.clipsToBounds;
+  return copy;
+}
+
+- (NSArray<GRFlowView *> *)splitForWidth:(CGFloat)width first:(CGFloat)first rest:(CGFloat)rest {
+  if([self heightForWidth:width] <= first) { return @[self]; }
+  CGFloat inner = MAX(0, width - self.insets.left - self.insets.right);
+  CGFloat chrome = self.insets.top + self.insets.bottom;
+  NSArray *items = [_items copy];
+  [_items removeAllObjects];
+  NSMutableArray *pieces = [NSMutableArray array];
+  GRFlowView *piece = self;
+  CGFloat used = chrome, limit = first;
+  for(GRFlowItem *item in items) {
+    UIView *view = item.view;
+    if(!view) { continue; }
+    CGFloat w = item.fill ? inner : MIN(inner, ceil([view sizeThatFits:CGSizeMake(inner, CGFLOAT_MAX)].width));
+    CGFloat h = item.height > 0 ? item.height : GRFittingHeight(view, w);
+    BOOL empty = used <= chrome;
+    CGFloat top = empty && pieces.count ? 0 : item.top;
+    if(!empty && used + top + h > limit) {
+      [pieces addObject:piece];
+      piece = [self emptyCopy];
+      used = chrome; limit = rest; top = 0;
+    }
+    if(item.height > 0) { [piece addView:view top:top height:item.height]; }
+    else { [piece addView:view top:top fill:item.fill]; }
+    used += top + h;
+  }
+  [pieces addObject:piece];
+  return pieces;
+}
+
 @end
 
 @implementation GRWrapView

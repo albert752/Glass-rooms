@@ -1,8 +1,14 @@
 # Glass Rooms
 
-## Revisió 1.2.1
+## Revisió 1.2.2
 
-**Novetat 1.2.1:** a l'app per a iPad, la pàgina Aparells es divideix en tres pàgines, cadascuna amb el seu botó a la navegació: **Escalfador** (els controls i, en una segona targeta, tota la informació i els sensors), **Ventiladors** (una targeta per ventilador, amb el llum del mateix nom, com els CREATE) i **Comandaments** (una targeta per cada dispositiu d'un emissor: per exemple, la tele i la llum de sostre apreses al mateix `remote.*` surten per separat). Els botons de la navegació són una mica més petits perquè n'hi càpiguen nou.
+**Novetats 1.2.2 (app per a iPad):**
+
+- **Sense desplaçament vertical:** cap pàgina es desplaça amunt i avall. Si el contingut no hi cap, continua en una pàgina següent: es passa lliscant el dit cap als costats o tocant els punts de sota, com a la pantalla d'inici d'iOS. El títol de la pàgina es queda fix. Les targetes llargues es parteixen entre pàgines i un títol de secció no queda mai sol al final d'una pàgina. Els calaixos laterals sí que es continuen desplaçant.
+- **Escalfador:** un termòstat circular al centre de la pàgina. L'arc il·luminat arriba fins a la temperatura objectiu, que es canvia arrossegant el dit per l'anell o amb − i +. Un arc interior i una marca indiquen a quina temperatura és l'aigua ara. A l'esquerra hi ha la temperatura de l'aigua, si està escalfant i el mode; a la dreta, l'encesa i el mode absència; a sota, els modes. La informació i els sensors passen a la pàgina següent.
+- En vertical, la data amb la temperatura de Barcelona ja no trepitja les gràfiques petites.
+
+**1.2.1:** a l'app per a iPad, la pàgina Aparells es divideix en tres pàgines, cadascuna amb el seu botó a la navegació: **Escalfador** (els controls i, en una segona targeta, tota la informació i els sensors), **Ventiladors** (una targeta per ventilador, amb el llum del mateix nom, com els CREATE) i **Comandaments** (una targeta per cada dispositiu d'un emissor: per exemple, la tele i la llum de sostre apreses al mateix `remote.*` surten per separat). Els botons de la navegació són una mica més petits perquè n'hi càpiguen nou.
 
 **Migració des de 1.1.x:** el panell web ja no existeix. Glass Rooms és ara un servidor d'API per a l'[app nativa per a iPad](docs/APP_IOS.md), que és l'única manera d'accedir-hi. Les opcions no canvien: l'app s'identifica amb el mateix `panel_pin` (o `app_token`). Si obries el panell amb Safari, instal·la l'app i introdueix-hi l'adreça del panell i el PIN. Les rutes `/api/login` i `/api/logout`, la cookie de sessió i els fitxers HTML, CSS, JavaScript i SVG s'han retirat; qualsevol petició a l'API sense `Authorization: Bearer` es rebutja.
 

@@ -185,3 +185,15 @@ Data: **19 de novembre de 2026**.
 | Captures Mac Catalyst 1024×768 | Pàgines Escalfador (controls i informació en dues targetes), Ventiladors (una targeta per ventilador amb el seu llum) i Comandaments (tele i llum de sostre del mateix emissor en dues targetes), en els dos estils; els nou botons de navegació no toquen la columna d'estances |
 
 No comprovat a l'iPad real.
+
+## Revisió 1.2.2 — pàgines sense desplaçament i termòstat de l'escalfador
+
+Data: **19 de novembre de 2026**.
+
+| Comprovació executada | Resultat |
+|---|---|
+| `python3 -m unittest discover -s tests` | Totes les proves superades (servidor i app nativa) |
+| Compilació iOS 9 (`ios/scripts/build.sh`) | Correcta amb `-Werror` per a armv7 i arm64 |
+| Captures Mac Catalyst 1024×768 i 768×1024 | Totes les pàgines en els dos estils, de dia i de nit, i la segona pàgina d'Estances, Escalfador, Comandaments, Preu de la llum, Seguretat i Ajustos: cap desplaçament vertical, punts de pàgina a sota, seccions senceres; termòstat amb objectiu, temperatura actual, − i + |
+
+No comprovat a l'iPad real: el pas de pàgina amb el dit, l'arrossegament del termòstat i el rendiment a l'A5.

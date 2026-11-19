@@ -14,6 +14,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)closeModal;
 - (void)setThemeChoice:(NSString *)theme;
 - (void)setStyleChoice:(NSString *)style;
+// Shows one of the pages of the current view (0 = first), as the page dots do.
+- (void)showPage:(NSInteger)index;
 - (void)appDidEnterBackground;
 - (void)appWillEnterForeground;
 @end

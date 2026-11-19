@@ -43,12 +43,21 @@ __attribute__((constructor)) static void GRInstallSnapshots(void) {
       NSString *suffix = [NSString stringWithFormat:@"-%@-%@", look[0], look[1]];
       add(@"", ^{ [panel closeModal]; [panel setStyleChoice:look[0]]; [panel setThemeChoice:look[1]]; [panel navigate:@"rooms"]; });
       add([@"rooms" stringByAppendingString:suffix], ^{});
+      add([@"rooms-p2" stringByAppendingString:suffix], ^{ [panel showPage:1]; });
       add([@"climate" stringByAppendingString:suffix], ^{ [panel navigate:@"climate"]; });
       add([@"heater" stringByAppendingString:suffix], ^{ [panel navigate:@"heater"]; });
+      add([@"heater-p2" stringByAppendingString:suffix], ^{ [panel showPage:1]; });
       add([@"fans" stringByAppendingString:suffix], ^{ [panel navigate:@"fans"]; });
       add([@"remotes" stringByAppendingString:suffix], ^{ [panel navigate:@"remotes"]; });
+      add([@"remotes-p2" stringByAppendingString:suffix], ^{ [panel showPage:1]; });
       add([@"energy" stringByAppendingString:suffix], ^{ [panel navigate:@"energy"]; });
+      add([@"energy-p2" stringByAppendingString:suffix], ^{ [panel showPage:1]; });
+      add([@"security" stringByAppendingString:suffix], ^{ [panel navigate:@"security"]; });
+      add([@"security-p2" stringByAppendingString:suffix], ^{ [panel showPage:1]; });
+      add([@"overview" stringByAppendingString:suffix], ^{ [panel navigate:@"overview"]; });
+      add([@"climate-after" stringByAppendingString:suffix], ^{ [panel navigate:@"climate"]; });
       add([@"settings" stringByAppendingString:suffix], ^{ [panel navigate:@"settings"]; });
+      add([@"settings-p2" stringByAppendingString:suffix], ^{ [panel showPage:1]; });
       add([@"room-drawer" stringByAppendingString:suffix], ^{ [panel navigate:@"rooms"]; [panel openRoom:@"menjador"]; });
       add([@"alarm-pad" stringByAppendingString:suffix], ^{
         [panel closeModal];
