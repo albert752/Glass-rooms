@@ -13,18 +13,6 @@ static void GRSave(NSString *name) {
   [UIImagePNGRepresentation(image) writeToFile:[directory stringByAppendingPathComponent:[name stringByAppendingString:@".png"]] atomically:YES];
 }
 
-static UISwitch *GRFindSwitch(UIView *view, NSString *identifier) {
-  if([view isKindOfClass:[UISwitch class]] && [view.accessibilityIdentifier isEqualToString:identifier]) { return (UISwitch *)view; }
-  for(UIView *child in view.subviews) { UISwitch *found = GRFindSwitch(child, identifier); if(found) { return found; } }
-  return nil;
-}
-
-static UIControl *GRFindControl(UIView *view, NSString *identifier) {
-  if([view isKindOfClass:[UIControl class]] && [view.accessibilityIdentifier isEqualToString:identifier]) { return (UIControl *)view; }
-  for(UIView *child in view.subviews) { UIControl *found = GRFindControl(child, identifier); if(found) { return found; } }
-  return nil;
-}
-
 static void GRScrollToEnd(UIView *view) {
   if([view isKindOfClass:[UIScrollView class]] && ((UIScrollView *)view).scrollEnabled && view.bounds.size.width > 600) {
     UIScrollView *scroll = (UIScrollView *)view;
@@ -58,43 +46,28 @@ __attribute__((constructor)) static void GRInstallSnapshots(void) {
     void (^add)(NSString *, void (^)(void)) = ^(NSString *name, void (^block)(void)) {
       [steps addObject:@[name.length ? [prefix stringByAppendingString:name] : @"", [block copy]]];
     };
-    add(@"", ^{ [panel setThemeChoice:@"day"]; });
-    add(@"rooms-day", ^{});
-    add(@"overview-day", ^{ [panel navigate:@"overview"]; });
-    add(@"climate-day", ^{ [panel navigate:@"climate"]; });
-    add(@"room-drawer-day", ^{ [panel navigate:@"rooms"]; [panel openRoom:@"menjador"]; });
-    add(@"settings-day", ^{ [panel closeModal]; [panel openSettings]; });
-    add(@"security-day", ^{ [panel closeModal]; [panel navigate:@"security"]; });
-    add(@"", ^{ [panel navigate:@"rooms"]; });
-    add(@"rooms-night", ^{ [panel closeModal]; [panel setThemeChoice:@"night"]; [panel navigate:@"rooms"]; });
-    add(@"climate-night", ^{ [panel navigate:@"climate"]; });
-    add(@"climate-humidity-night", ^{ [GRFindControl(window, @"sensor.hum_menjador") sendActionsForControlEvents:UIControlEventTouchUpInside]; });
-    add(@"security-night", ^{ [panel navigate:@"security"]; });
-    add(@"", ^{});
-    add(@"security-night-camera", ^{});
-    add(@"security-night-end", ^{ GRScrollToEnd(window); });
-    add(@"room-drawer-night", ^{ [panel navigate:@"rooms"]; [panel openRoom:@"menjador"]; });
-    add(@"lights-drawer-night", ^{ [panel closeModal]; [panel navigate:@"lights"]; });
-    add(@"swipe-to-climate", ^{
-      [panel closeModal]; [panel navigate:@"rooms"];
-      UISwipeGestureRecognizer *swipe = [UISwipeGestureRecognizer new]; swipe.direction = UISwipeGestureRecognizerDirectionLeft;
-      [panel performSelector:@selector(swiped:) withObject:swipe];
-    });
-    add(@"", ^{ [panel navigate:@"rooms"]; });
-    add(@"after-switch", ^{
-      [panel closeModal];
-      UISwitch *toggle = GRFindSwitch(window, @"cuina");
-      [toggle setOn:!toggle.on animated:NO];
-      [toggle sendActionsForControlEvents:UIControlEventValueChanged];
-    });
-    add(@"", ^{
-      UISwitch *toggle = GRFindSwitch(window, @"habitacio");
-      [toggle setOn:!toggle.on animated:NO];
-      [toggle sendActionsForControlEvents:UIControlEventValueChanged];
-    });
-    for(NSInteger i = 0; i < 8; i++) { add(@"", ^{}); }
-    add(@"after-unresponsive", ^{});
-    add(@"", ^{ [panel setThemeChoice:@"auto"]; });
+    // Both styles, by night and by day.
+    for(NSArray *look in @[@[@"warm", @"night"], @[@"jarvis", @"night"], @[@"jarvis", @"day"], @[@"warm", @"day"]]) {
+      NSString *suffix = [NSString stringWithFormat:@"-%@-%@", look[0], look[1]];
+      add(@"", ^{ [panel closeModal]; [panel setStyleChoice:look[0]]; [panel setThemeChoice:look[1]]; [panel navigate:@"rooms"]; });
+      add([@"rooms" stringByAppendingString:suffix], ^{});
+      add([@"climate" stringByAppendingString:suffix], ^{ [panel navigate:@"climate"]; });
+      add([@"devices" stringByAppendingString:suffix], ^{ [panel navigate:@"devices"]; });
+      add([@"devices-end" stringByAppendingString:suffix], ^{ GRScrollToEnd(window); });
+      add([@"energy" stringByAppendingString:suffix], ^{ [panel navigate:@"energy"]; });
+      add([@"settings" stringByAppendingString:suffix], ^{ [panel navigate:@"settings"]; });
+      add([@"room-drawer" stringByAppendingString:suffix], ^{ [panel navigate:@"rooms"]; [panel openRoom:@"menjador"]; });
+      add([@"alarm-pad" stringByAppendingString:suffix], ^{
+        [panel closeModal];
+        for(NSDictionary *entity in panel.model.entities) {
+          if(![entity[@"domain"] isEqual:@"alarm_control_panel"]) { continue; }
+          for(NSDictionary *control in entity[@"controls"]) {
+            if([control[@"action"] isEqual:@"alarm_disarm"]) { [panel performSelector:NSSelectorFromString(@"alarmPrompt:control:") withObject:entity withObject:control]; }
+          }
+        }
+      });
+    }
+    add(@"", ^{ [panel closeModal]; [panel setStyleChoice:@"warm"]; [panel setThemeChoice:@"auto"]; [panel navigate:@"rooms"]; });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ GRRun(steps, 0); });
   }];
 }

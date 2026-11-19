@@ -33,6 +33,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)sendAction:(NSDictionary *)entity control:(NSDictionary *)control value:(nullable id)value code:(nullable NSString *)code
         completion:(void (^)(NSString *_Nullable error))completion;
 - (void)turnLights:(NSArray<NSDictionary *> *)lights place:(NSString *)place action:(NSString *)action skipped:(NSUInteger)skipped;
+// One brightness (1-255) or colour temperature (K) for several lights at once; off lights switch on.
+- (void)adjustLights:(NSArray<NSDictionary *> *)lights action:(NSString *)action value:(NSNumber *)value;
 - (void)loadClimateHistory;
 - (void)changeClimatePeriod:(NSInteger)hours;
 - (void)loadAudit:(void (^)(NSString *text))completion;

@@ -26,12 +26,16 @@ static NSString *const GRFallbackTokenKey = @"glass-rooms-token-fallback";
   return [@[@"auto", @"day", @"night"] containsObject:theme] ? theme : @"auto";
 }
 - (void)setTheme:(NSString *)value { [[self defaults] setObject:value forKey:@"glass-rooms-theme"]; }
+- (NSString *)style { return [[[self defaults] stringForKey:@"glass-rooms-style"] isEqualToString:@"jarvis"] ? @"jarvis" : @"warm"; }
+- (void)setStyle:(NSString *)value { [[self defaults] setObject:value forKey:@"glass-rooms-style"]; }
+- (BOOL)screenDim { id stored = [[self defaults] objectForKey:@"glass-rooms-screen-dim"]; return stored ? [stored boolValue] : YES; }
+- (void)setScreenDim:(BOOL)value { [[self defaults] setBool:value forKey:@"glass-rooms-screen-dim"]; }
 - (NSInteger)screenLock {
   // Before 1.1.13 there was only a keep-awake switch: on means never lock.
   id stored = [[self defaults] objectForKey:@"glass-rooms-screen-lock"];
   if(!stored) { return [[self defaults] boolForKey:@"glass-rooms-keep-awake"] ? -1 : 0; }
   NSInteger value = [[self defaults] integerForKey:@"glass-rooms-screen-lock"];
-  return value >= -1 && value <= 4 * 3600 ? value : 0;
+  return value == -1 || value == 0 || (value >= 5 && value <= 24 * 3600) ? value : 0;
 }
 - (void)setScreenLock:(NSInteger)value { [[self defaults] setInteger:value forKey:@"glass-rooms-screen-lock"]; }
 

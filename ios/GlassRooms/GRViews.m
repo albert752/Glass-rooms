@@ -82,18 +82,24 @@ void GRStyleSwitch(UISwitch *toggle) {
     case GRButtonStylePlain: border = nil; radius = 0; break;
   }
   self.backgroundColor = background;
-  self.layer.cornerRadius = radius;
+  self.layer.cornerRadius = GRRadius(radius);
   self.layer.borderWidth = border ? 1 : 0;
   self.layer.borderColor = border.CGColor;
   if(self.style != GRButtonStylePlain) {
-    self.titleLabel.font = GRFont(size, weight);
+    self.titleLabel.font = GRFont(self.fontSize > 0 ? self.fontSize : size, self.fontSize > 0 ? UIFontWeightLight : weight);
     [self setTitleColor:text forState:UIControlStateNormal];
     [self setTitleColor:text forState:UIControlStateDisabled];
     self.titleLabel.textAlignment = NSTextAlignmentCenter;
     self.contentEdgeInsets = [self padding];
   }
   self.alpha = self.enabled ? 1 : .45;
+  // Jarvis: the accent glows around primary and selected buttons.
+  BOOL glowing = t.jarvis && (self.style == GRButtonStylePrimary || self.selectedLook);
+  GRGlow(self.layer, t.accent, glowing ? 8 : 0);
+  if(!glowing) { self.layer.shadowOpacity = 0; }
 }
+
+- (void)setFontSize:(CGFloat)fontSize { _fontSize = fontSize; [self applyTheme]; }
 
 - (void)setEnabled:(BOOL)enabled { [super setEnabled:enabled]; [self applyTheme]; }
 - (void)setSelectedLook:(BOOL)selectedLook { _selectedLook = selectedLook; [self applyTheme]; }

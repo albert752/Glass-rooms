@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Glass Rooms: config-driven inventory, fail-closed controls and a private HA API bridge.
+"""Glass Rooms: config-driven inventory, fail-closed controls and a private HA API bridge for the iPad app.
+
+Since 1.2.0 the server is only a JSON API: there is no web panel, no browser session and no static files.
+Every /api route except /api/session needs Authorization: Bearer <panel_pin or app_token>.
 
 Runtime dependencies are Python's standard library and the pinned websockets client. Never log requests, headers, bodies,
 upstream responses, exception text or credentials. The Supervisor token stays
@@ -11,7 +14,6 @@ from concurrent.futures import ThreadPoolExecutor
 import datetime
 import hashlib
 import hmac
-import http.cookies
 import ipaddress
 import json
 import math
@@ -35,10 +37,7 @@ try:
 except ImportError:
     from catalog import BY_ID, CATALOG, ROOMS, ROOM_IDS, catalog_for
 
-ROOT = Path(__file__).resolve().parent / "www"
 UPSTREAM = "http://supervisor/core/api"
-SESSION_SECONDS = 12 * 60 * 60
-COOKIE_NAME = "glass_rooms_session"
 APP_TOKEN_PATTERN = r"[A-Za-z0-9_-]{32,128}"
 MAX_BODY = 4096
 ARM_FEATURES = {
@@ -53,7 +52,7 @@ ACTION_NAMES = {
     "input_boolean": {"turn_on", "turn_off"},
     "scene": {"turn_on"},
     "alarm_control_panel": set(ARM_FEATURES) | {"alarm_disarm"},
-    "water_heater": {"set_operation_mode"},
+    "water_heater": {"set_operation_mode", "set_temperature", "turn_on", "turn_off", "set_away_mode"},
     "fan": {"turn_on", "turn_off", "set_percentage"},
     "media_player": {"turn_on", "turn_off", "media_play", "media_pause", "volume_set"},
     # The panel can only silence a siren; turn_on is listed so a verified entry never exposes it.
@@ -72,7 +71,8 @@ ATTRS = {
     "binary_sensor": {"device_class", "friendly_name"},
     "script": {"friendly_name"},
     "water_heater": {"supported_features", "current_temperature", "temperature_unit", "friendly_name",
-                     "operation_mode", "operation_list"},
+                     "operation_mode", "operation_list", "temperature", "target_temp_high", "target_temp_low",
+                     "min_temp", "max_temp", "target_temp_step", "away_mode"},
     "fan": {"supported_features", "percentage", "percentage_step", "friendly_name"},
     "media_player": {"supported_features", "volume_level", "is_volume_muted", "media_title", "media_artist", "friendly_name"},
     # Cameras never expose entity_picture or access_token: images go through /api/camera only.
@@ -81,7 +81,20 @@ ATTRS = {
     "remote": {"friendly_name"},
     "person": {"friendly_name"},
     "device_tracker": {"friendly_name", "source_type"},
+    # Outdoor weather (Met.no, AEMET...): the state is the condition, the reading comes in the attributes.
+    "weather": {"friendly_name", "temperature", "temperature_unit", "apparent_temperature", "humidity",
+                "wind_speed", "wind_speed_unit", "pressure", "pressure_unit"},
 }
+# Water heaters also pass their other plain attributes (power, showers, tank level...) so the panel can show
+# everything the device reports; keys with one of these words are never passed.
+WATER_HEATER_SECRET_WORDS = {"token", "password", "passwd", "secret", "key", "code", "auth", "url", "uri", "picture",
+                             "image", "ip", "mac", "serial", "email", "user", "username", "pin", "ssid", "host",
+                             "address", "latitude", "longitude", "access", "icon", "entity", "id"}
+# Spanish electricity price (PVPC, pvpc_hourly_pricing integration): hourly prices and the day's summary.
+PVPC_ATTRS = {"tariff", "period", "next_period", "hours_to_next_period", "next_better_price", "hours_to_better_price",
+              "num_better_prices_ahead", "price_position", "price_ratio", "max_price", "max_price_at", "min_price",
+              "min_price_at", "next_best_at", "available_power"}
+CLIMATE_HOURS = (1, 3, 6, 12, 24, 48, 168, 336, 720)
 PRIVATE_NETS = [ipaddress.ip_network(value) for value in (
     "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "fc00::/7", "::1/128")]
 
@@ -146,12 +159,12 @@ class Settings:
         self.verified = set()
         self.room_assignments = {}
         self.remote_buttons = {}
+        self.fan_speeds = {}
         self.alarm_modes = set()
         self.arm_code = "unknown"
         self.disarm_code = "unknown"
         self.tls_cert = self.tls_key = None
         self.pin_salt = secrets.token_bytes(32)
-        self.pin_hash = b""
         self.app_token_hash = b""
         self.pin_bearer_hash = b""
         self.catalog = CATALOG
@@ -172,16 +185,15 @@ class Settings:
         if not isinstance(options, dict):
             raise ValueError("Les opcions han de ser un objecte JSON.")
         known = {"panel_pin", "app_token", "allowed_hosts", "allowed_networks", "verified_actions", "room_assignments",
-                 "light_entity_ids", "entity_ids", "remote_buttons",
+                 "light_entity_ids", "entity_ids", "remote_buttons", "fan_speeds",
                  "alarm_modes", "alarm_arm_code", "alarm_disarm_code", "tls_certfile", "tls_keyfile"}
         if set(options) - known:
             raise ValueError("Hi ha opcions desconegudes; reviseu la configuració.")
         pin = options.get("panel_pin", "")
         if not isinstance(pin, str) or not re.fullmatch(r"[0-9]{6,8}", pin):
             raise ValueError("Configureu panel_pin privat, de 6 a 8 dígits.")
-        self.pin_hash = self.pin_digest(pin)
-        # The native app sends the panel PIN on every request; a keyed SHA-256 avoids running
-        # PBKDF2 for each poll while failed attempts stay rate limited like the PIN pad.
+        # The app sends the panel PIN on every request; a keyed SHA-256 with a startup salt keeps it out of
+        # memory in clear, and failed attempts are rate limited (5 per minute and IP).
         self.pin_bearer_hash = hmac.new(self.pin_salt, pin.encode("ascii"), hashlib.sha256).digest()
         app_token = options.get("app_token", "")
         if not isinstance(app_token, str) or (app_token and not re.fullmatch(APP_TOKEN_PATTERN, app_token)):
@@ -234,9 +246,16 @@ class Settings:
                     or any(not re.fullmatch(r"[^:\x00-\x1f]{1,64}", part.strip()) for part in parts[1:])):
                 raise ValueError("remote_buttons ha de tenir el format remote.entitat:dispositiu:ordre:Etiqueta.")
             buttons = self.remote_buttons.setdefault(parts[0], [])
-            if len(buttons) >= 24:
-                raise ValueError("Cada remote admet com a màxim 24 botons a remote_buttons.")
+            if len(buttons) >= 48:
+                raise ValueError("Cada remote admet com a màxim 48 botons a remote_buttons.")
             buttons.append(tuple(part.strip() for part in parts[1:]))
+        # "fan.x:6": the fan has 6 speeds, for integrations that publish percentage_step 1.
+        for item in list_option(options, "fan_speeds"):
+            entity_id, separator, count = item.partition(":")
+            if (not separator or self.by_id.get(entity_id, {}).get("domain") != "fan" or not re.fullmatch(r"[0-9]{1,2}", count)
+                    or not 2 <= int(count) <= 10 or entity_id in self.fan_speeds):
+                raise ValueError("fan_speeds ha de tenir el format fan.entitat:N, amb N de 2 a 10, un cop per ventilador.")
+            self.fan_speeds[entity_id] = int(count)
         self.alarm_modes = set(list_option(options, "alarm_modes"))
         if not self.alarm_modes <= set(ARM_FEATURES):
             raise ValueError("alarm_modes conté un mode no admès.")
@@ -258,13 +277,6 @@ class Settings:
     @property
     def scheme(self):
         return "https" if self.tls_cert else "http"
-
-    def pin_digest(self, pin):
-        return hashlib.pbkdf2_hmac("sha256", pin.encode("ascii"), self.pin_salt, 200000)
-
-    def check_pin(self, pin):
-        return isinstance(pin, str) and bool(re.fullmatch(r"[0-9]{6,8}", pin)) and hmac.compare_digest(
-            self.pin_hash, self.pin_digest(pin))
 
     def check_app_token(self, token):
         """The native app authenticates with the panel PIN (or the optional app_token) as a bearer token."""
@@ -420,7 +432,9 @@ def filtered_attributes(domain, raw):
         if key not in raw:
             continue
         numeric = {"supported_features", "brightness", "color_temp_kelvin", "min_color_temp_kelvin",
-                   "max_color_temp_kelvin", "current_temperature", "percentage", "percentage_step", "volume_level"}
+                   "max_color_temp_kelvin", "current_temperature", "percentage", "percentage_step", "volume_level",
+                   "temperature", "target_temp_high", "target_temp_low", "min_temp", "max_temp", "target_temp_step",
+                   "apparent_temperature", "humidity", "wind_speed", "pressure"}
         boolean = {"code_arm_required", "is_volume_muted"}
         lists = {"supported_color_modes", "operation_list", "lights"}
         if value is None:
@@ -436,6 +450,22 @@ def filtered_attributes(domain, raw):
                 result[key] = [v for v in value if re.fullmatch(r"light\.[a-z0-9_]+", v)]
             else:
                 result[key] = value[:]
+    if domain == "sensor" and number(raw.get("price_00h")):
+        for key, value in raw.items():
+            if isinstance(key, str) and re.fullmatch(r"price_(?:next_day_)?[0-2][0-9]h", key) and number(value):
+                result[key] = value
+            elif key in PVPC_ATTRS and (number(value) or short_string(value, 40)):
+                result[key] = value
+            elif key in PVPC_ATTRS and isinstance(value, list) and len(value) <= 48 and all(number(v) for v in value):
+                result[key] = value[:]
+    if domain == "water_heater":
+        for key, value in raw.items():
+            if (key in result or len(result) >= 48 or not isinstance(key, str)
+                    or not re.fullmatch(r"[a-z][a-z0-9_]{0,39}", key)
+                    or set(key.split("_")) & WATER_HEATER_SECRET_WORDS):
+                continue
+            if isinstance(value, bool) or number(value) or (short_string(value, 64) and "://" not in value):
+                result[key] = value
     return result
 
 
@@ -546,10 +576,25 @@ def controls_for(item, state, attrs, services, settings):
             blocker = "El servei no publica el camp de codi."
         add("alarm_disarm", "Desarmar", "alarm", blocker=blocker, requires_code=settings.disarm_code == "required")
     elif domain == "water_heater":
+        # Feature bits: 1 target temperature, 2 operation mode, 4 away mode, 8 on/off.
+        if features & 8:
+            add("turn_on", "Encendre")
+            add("turn_off", "Apagar")
+        low, high = attrs.get("min_temp"), attrs.get("max_temp")
+        if features & 1 and number(low) and number(high) and -50 <= low < high <= 150:
+            step = attrs.get("target_temp_step")
+            step = step if number(step) and 0 < step <= 10 else (1 if attrs.get("temperature_unit") == "°F" else 0.5)
+            value = attrs.get("temperature")
+            add("set_temperature", "Temperatura objectiu", "range", field="temperature", min=low, max=high, step=step,
+                value=value if number(value) and low <= value <= high else None)
         modes = attrs.get("operation_list")
         if features & 2 and isinstance(modes, list) and modes and all(short_string(v, 100) and v for v in modes):
             add("set_operation_mode", "Mode d'operació", "select", field="operation_mode",
                 options=list(dict.fromkeys(modes)), value=attrs.get("operation_mode"))
+        if features & 4:
+            # Both buttons are verified at once with water_heater.x:set_away_mode.
+            add("away_mode_on", "Activa el mode absència", service="set_away_mode", field="away_mode", verify="set_away_mode")
+            add("away_mode_off", "Desactiva el mode absència", service="set_away_mode", field="away_mode", verify="set_away_mode")
     elif domain == "fan" and state in {"on", "off"}:
         if features & 32:
             add("turn_on", "Encendre")
@@ -557,9 +602,15 @@ def controls_for(item, state, attrs, services, settings):
             add("turn_off", "Apagar")
         if features & 1:
             value, step = attrs.get("percentage"), attrs.get("percentage_step")
+            # Number of speeds: from fan_speeds, else from percentage_step when it divides 100 evenly (6 speeds: 16.67).
+            speeds = settings.fan_speeds.get(entity_id)
+            if not speeds and number(step) and 0 < step < 100:
+                count = round(100 / step)
+                if 2 <= count <= 10 and abs(100 / count - step) < 0.01:
+                    speeds = count
             add("set_percentage", "Velocitat (%)", "range", field="percentage", min=0, max=100,
                 step=step if number(step) and 0 < step <= 100 else 1,
-                value=value if number(value) and 0 <= value <= 100 else None)
+                value=value if number(value) and 0 <= value <= 100 else None, **({"speeds": speeds} if speeds else {}))
     elif domain == "media_player":
         if state not in {"off", "on", "idle", "playing", "paused", "buffering", "standby"}:
             return controls
@@ -601,6 +652,8 @@ def entities_for(states, services, settings, connected):
                     entity["changed"] = changed
                 if item["domain"] == "sensor" and entity["attributes"].get("device_class") in {"temperature", "humidity"}:
                     entity["category"] = "climate"
+                if item["domain"] == "sensor" and "price_00h" in entity["attributes"]:
+                    entity["category"] = "energy"
                 friendly_name = entity["attributes"].get("friendly_name")
                 if short_string(friendly_name, 120) and friendly_name.strip():
                     entity["name"] = friendly_name.strip()
@@ -627,7 +680,7 @@ def action_payload(entity, body):
         if action in {"brightness", "color_temp_kelvin", "set_percentage"} and value != int(value):
             raise PublicError("Aquest control requereix un valor enter.")
         field = {"brightness": "brightness", "color_temp_kelvin": "color_temp_kelvin",
-                 "set_percentage": "percentage", "volume_set": "volume_level"}[action]
+                 "set_percentage": "percentage", "volume_set": "volume_level", "set_temperature": "temperature"}[action]
         payload[field] = value
         if entity["domain"] == "light":
             service = "turn_on"
@@ -637,6 +690,9 @@ def action_payload(entity, body):
         payload["operation_mode"] = body["value"]
     elif "value" in body:
         raise PublicError("Aquesta acció no admet un valor addicional.")
+    if entity["domain"] == "water_heater" and action in {"away_mode_on", "away_mode_off"}:
+        service = "set_away_mode"
+        payload["away_mode"] = action == "away_mode_on"
     if entity["domain"] == "remote":
         service = "send_command"
         payload.update(device=control["device"], command=control["command"])
@@ -658,7 +714,6 @@ def action_payload(entity, body):
 class App:
     def __init__(self, settings, client=None):
         self.settings, self.client = settings, client
-        self.sessions = {}
         self.attempts = {}
         self.lock = threading.Lock()
         self.action_lock = threading.Lock()
@@ -732,28 +787,6 @@ class App:
                 raise PublicError("Massa intents. Espereu una estona i torneu-ho a provar.", 429)
             self.attempts[key] = values + [now]
 
-    def new_session(self, address):
-        now = time.monotonic()
-        token = secrets.token_urlsafe(32)
-        session = {"csrf": secrets.token_urlsafe(32), "expires": now + SESSION_SECONDS, "address": address}
-        with self.lock:
-            self.sessions = {k: v for k, v in self.sessions.items() if v["expires"] > now}
-            if len(self.sessions) >= 32:
-                oldest = min(self.sessions, key=lambda k: self.sessions[k]["expires"])
-                del self.sessions[oldest]
-            self.sessions[token] = session
-        return token, session
-
-    def get_session(self, token, address):
-        with self.lock:
-            session = self.sessions.get(token)
-            if session and session["expires"] <= time.monotonic():
-                del self.sessions[token]
-                return None
-            if session and session["address"] == address:
-                return dict(session)
-        return None
-
     def state(self, audit=False):
         states, services, version = {}, {}, None
         connected = False
@@ -790,7 +823,7 @@ class App:
         return result
 
     def climate_history(self, hours):
-        if hours not in (6, 24, 168, 720):
+        if hours not in CLIMATE_HOURS:
             raise PublicError("El període de l'historial no és vàlid.")
         if self.settings.preview:
             return {"hours": hours, "series": {}}
@@ -870,14 +903,23 @@ class App:
     def lights_action(self, body):
         if self.settings.preview:
             raise PublicError("La previsualització és només de lectura.", 403)
-        if not isinstance(body, dict) or set(body) != {"entity_ids", "action"}:
+        if (not isinstance(body, dict) or not {"entity_ids", "action"} <= set(body)
+                or set(body) - {"entity_ids", "action", "value"}):
             raise PublicError("La petició de llums conté camps no admesos.")
         ids, action = body["entity_ids"], body["action"]
         if (not isinstance(ids, list) or not 1 <= len(ids) <= 256
                 or any(not isinstance(entity_id, str) for entity_id in ids)
                 or len(set(ids)) != len(ids) or not isinstance(action, str)
-                or action not in {"turn_on", "turn_off"}):
+                or action not in {"turn_on", "turn_off", "brightness", "color_temp_kelvin"}):
             raise PublicError("La llista de llums o l'acció és invàlida.")
+        value = body.get("value")
+        if action in {"brightness", "color_temp_kelvin"}:
+            low, high = (1, 255) if action == "brightness" else (500, 40000)
+            if not number(value) or value != int(value) or not low <= value <= high:
+                raise PublicError("El valor és fora dels límits admesos per als llums.")
+            value = int(value)
+        elif "value" in body:
+            raise PublicError("Aquesta acció no admet un valor addicional.")
         if any(self.settings.by_id.get(entity_id, {}).get("domain") != "light" for entity_id in ids):
             raise PublicError("Només es poden controlar llums configurats.", 403)
         with self.action_lock:
@@ -888,8 +930,13 @@ class App:
             failed, first_error = 0, None
             for entity_id in ids:
                 entity = entities[entity_id]
+                command = {"entity_id": entity_id, "action": action}
+                if value is not None:
+                    # One colour temperature for every light: each one gets the nearest value it publishes.
+                    control = next((c for c in entity["controls"] if c["action"] == action and c["kind"] == "range"), None)
+                    command["value"] = min(max(value, control["min"]), control["max"]) if control else value
                 try:
-                    service, payload = action_payload(entity, {"entity_id": entity_id, "action": action})
+                    service, payload = action_payload(entity, command)
                     calls.append((entity, service, payload))
                 except PublicError as exc:
                     failed += 1
@@ -967,28 +1014,25 @@ class Handler(BaseHTTPRequestHandler):
     def app(self):
         return self.server.app
 
-    def reply(self, data, status=200, content_type="application/json; charset=utf-8", cookie=None, cache_control="no-store"):
+    def reply(self, data, status=200, content_type="application/json; charset=utf-8"):
         payload = data if isinstance(data, bytes) else json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", cache_control)
-        if cache_control == "no-store":
-            self.send_header("Pragma", "no-cache")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Pragma", "no-cache")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "same-origin")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+        self.send_header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
         self.send_header("Connection", "close")
-        if cookie:
-            self.send_header("Set-Cookie", cookie)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(payload)
         self.close_connection = True
 
     def bearer(self):
-        """Return the native-app token when the request uses one; browsers never send it."""
+        """Return the app's token (panel PIN or app_token), or None without an Authorization header."""
         values = self.headers.get_all("Authorization", [])
         if not values:
             return None
@@ -997,7 +1041,7 @@ class Handler(BaseHTTPRequestHandler):
             raise PublicError("Capçalera d'autorització no admesa.", 401)
         return token
 
-    def guard(self, writing=False):
+    def guard(self):
         if not self.app.settings.allows_client(self.client_address[0]):
             raise PublicError("Accés restringit a la xarxa local configurada.", 403)
         hosts = self.headers.get_all("Host", [])
@@ -1007,49 +1051,20 @@ class Handler(BaseHTTPRequestHandler):
             valid_host = False
         if not valid_host:
             raise PublicError("Host no autoritzat. Reviseu l'adreça i allowed_hosts.", 403)
-        if writing and self.bearer() is None:
-            # Browser writes need the same origin; bearer requests carry no ambient credential.
-            origins = self.headers.get_all("Origin", [])
-            refers = self.headers.get_all("Referer", [])
-            expected = self.app.settings.scheme + "://" + hosts[0].lower()
-            if origins:
-                valid_origin = len(origins) == 1 and origins[0].lower() == expected
-            else:
-                valid_origin = False
-                if len(refers) == 1:
-                    try:
-                        ref = parse.urlsplit(refers[0])
-                        valid_origin = not ref.username and not ref.password and ref.scheme + "://" + ref.netloc.lower() == expected
-                    except ValueError:
-                        pass
-            if not valid_origin:
-                raise PublicError("Origen no autoritzat. Obriu el panell des de la seva adreça local.", 403)
         if parse.urlsplit(self.path).scheme or not self.path.startswith("/") or self.path.startswith("//"):
             raise PublicError("Ruta no admesa.", 400)
 
-    def session(self, required=True):
+    def authenticated(self, required=True):
+        """Valid bearer: True. No bearer: False, or 401 when required. Wrong bearer: 401, rate limited."""
         token = self.bearer()
-        if token is not None:
-            if not self.app.settings.check_app_token(token):
-                self.app.rate_limit(self.client_address[0], "login", 5, 60)
-                raise PublicError("PIN o token de l'app incorrecte.", 401)
-            return "", {"csrf": "", "app": True}
-        cookies = http.cookies.SimpleCookie()
-        try:
-            cookies.load(self.headers.get("Cookie", ""))
-        except http.cookies.CookieError:
-            cookies = http.cookies.SimpleCookie()
-        token = cookies[COOKIE_NAME].value if COOKIE_NAME in cookies else ""
-        session = self.app.get_session(token, self.client_address[0])
-        if required and not session:
-            raise PublicError("Cal iniciar sessió al panell.", 401)
-        return token, session
-
-    def cookie(self, token, expire=False):
-        value = COOKIE_NAME + "=" + token + "; Path=/api; HttpOnly; SameSite=Strict; Max-Age=" + ("0" if expire else str(SESSION_SECONDS))
-        if self.app.settings.tls_cert:
-            value += "; Secure"
-        return value
+        if token is None:
+            if required:
+                raise PublicError("Cal el PIN del panell. Configura'l a l'app Glass Rooms.", 401)
+            return False
+        if not self.app.settings.check_app_token(token):
+            self.app.rate_limit(self.client_address[0], "login", 5, 60)
+            raise PublicError("PIN o token de l'app incorrecte.", 401)
+        return True
 
     def read_json(self):
         if self.headers.get_content_type() != "application/json":
@@ -1079,30 +1094,26 @@ class Handler(BaseHTTPRequestHandler):
         parsed_path = parse.urlsplit(self.path)
         path = parsed_path.path
         if path == "/api/session":
-            _, session = self.session(False)
-            result = {"authenticated": bool(session), "preview": self.app.settings.preview}
-            if session:
-                result["csrf"] = session["csrf"]
-            self.reply(result)
+            self.reply({"authenticated": self.authenticated(False), "preview": self.app.settings.preview})
             return
         if path in {"/api/state", "/api/audit"}:
             if not self.app.settings.preview:
-                self.session()
+                self.authenticated()
             self.app.rate_limit(self.client_address[0], "read", 90, 60)
             self.reply(self.app.state(audit=path == "/api/audit"))
             return
         if path == "/api/climate-history":
             if not self.app.settings.preview:
-                self.session()
+                self.authenticated()
             query = parse.parse_qs(parsed_path.query, keep_blank_values=True)
-            if set(query) != {"hours"} or len(query["hours"]) != 1 or query["hours"][0] not in {"6", "24", "168", "720"}:
+            if set(query) != {"hours"} or len(query["hours"]) != 1 or query["hours"][0] not in {str(value) for value in CLIMATE_HOURS}:
                 raise PublicError("El període de l'historial no és vàlid.")
             self.app.rate_limit(self.client_address[0], "history", 12, 60)
             self.reply(self.app.climate_history(int(query["hours"][0])))
             return
         if path == "/api/camera":
             if not self.app.settings.preview:
-                self.session()
+                self.authenticated()
             query = parse.parse_qs(parsed_path.query, keep_blank_values=True)
             entity_id = query.get("entity_id", [""])[0] if set(query) == {"entity_id"} and len(query["entity_id"]) == 1 else ""
             item = self.app.settings.by_id.get(entity_id)
@@ -1116,7 +1127,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/updates":
             if not self.app.settings.preview:
-                self.session()
+                self.authenticated()
             query = parse.parse_qs(parsed_path.query, keep_blank_values=True)
             values = query.get("since", [])
             if set(query) != {"since"} or len(values) != 1 or not re.fullmatch(r"[0-9]{1,18}", values[0]):
@@ -1125,58 +1136,20 @@ class Handler(BaseHTTPRequestHandler):
             revision = self.app.wait_for_state_update(int(values[0]), timeout=20)
             self.reply({"revision": revision, "live_updates": self.app.live_updates})
             return
-        files = {"/": ("index.html", "text/html; charset=utf-8"),
-                 "/index.html": ("index.html", "text/html; charset=utf-8"),
-                 "/app.js": ("app.js", "application/javascript; charset=utf-8"),
-                 "/style.css": ("style.css", "text/css; charset=utf-8"),
-                 "/boot.js": ("boot.js", "application/javascript; charset=utf-8"),
-                 "/diagnostics.html": ("diagnostics.html", "text/html; charset=utf-8"),
-                 "/diagnostics.js": ("diagnostics.js", "application/javascript; charset=utf-8")}
-        files.update({"/assets/" + room + ".svg": ("assets/" + room + ".svg", "image/svg+xml") for room in ROOM_IDS})
-        if path not in files:
-            raise PublicError("Recurs no trobat.", 404)
-        filename, kind = files[path]
-        target = ROOT / filename
-        # Whitelist plus resolution check prevents a symlink from exposing /data or /ssl.
-        if not target.resolve().is_relative_to(ROOT.resolve()) or not target.is_file():
-            raise PublicError("Recurs no trobat.", 404)
-        self.reply(target.read_bytes(), content_type=kind,
-                   cache_control="public, max-age=86400" if kind == "image/svg+xml" else "no-store")
+        # No web panel since 1.2.0: anything outside the API is not found.
+        raise PublicError("Recurs no trobat.", 404)
 
     def dispatch_post(self):
-        self.guard(writing=True)
+        self.guard()
         if self.app.settings.preview:
             raise PublicError("La previsualització és només de lectura.", 403)
         path = parse.urlsplit(self.path).path
-        if path not in {"/api/login", "/api/logout", "/api/action", "/api/lights"}:
+        if path not in {"/api/action", "/api/lights"}:
             raise PublicError("Recurs no trobat.", 404)
-        if path in {"/api/login", "/api/logout"} and self.bearer() is not None:
-            raise PublicError("L'app nativa no utilitza sessions de navegador.", 400)
-        if path == "/api/login":
-            self.app.rate_limit(self.client_address[0], "login", 5, 60)
-            body = self.read_json()
-            if set(body) != {"pin"} or not self.app.settings.check_pin(body.get("pin")):
-                raise PublicError("PIN incorrecte.", 401)
-            previous, _ = self.session(False)
-            with self.app.lock:
-                self.app.sessions.pop(previous, None)
-            token, session = self.app.new_session(self.client_address[0])
-            self.reply({"authenticated": True, "csrf": session["csrf"]}, cookie=self.cookie(token))
-            return
-        token, session = self.session()
-        csrf = self.headers.get_all("X-CSRF-Token", [])
-        if not session.get("app") and (len(csrf) != 1 or not hmac.compare_digest(csrf[0], session["csrf"])):
-            raise PublicError("La sessió ha canviat. Torneu a carregar el panell.", 403)
+        self.authenticated()
         body = self.read_json()
-        if path == "/api/logout":
-            if body:
-                raise PublicError("La sortida de sessió no admet camps.")
-            with self.app.lock:
-                self.app.sessions.pop(token, None)
-            self.reply({"authenticated": False}, cookie=self.cookie("", expire=True))
-            return
-        item = self.app.settings.by_id.get(body.get("entity_id")) if isinstance(body, dict) and isinstance(body.get("entity_id"), str) else None
-        action = body.get("action") if isinstance(body, dict) else None
+        item = self.app.settings.by_id.get(body.get("entity_id")) if isinstance(body.get("entity_id"), str) else None
+        action = body.get("action")
         light_toggle = path == "/api/lights" or (item and item["domain"] == "light" and isinstance(action, str) and action in {"turn_on", "turn_off"})
         self.app.rate_limit(self.client_address[0], "light_action" if light_toggle else "action", 120 if light_toggle else 30, 60)
         self.reply(self.app.lights_action(body) if path == "/api/lights" else self.app.action(body))

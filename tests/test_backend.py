@@ -142,8 +142,8 @@ class ConfigurationTests(unittest.TestCase):
     def test_pin_is_hashed_not_retained(self):
         options = config()
         settings = Settings(options)
-        self.assertTrue(settings.check_pin(options["panel_pin"]))
-        self.assertFalse(settings.check_pin("87654321"))
+        self.assertTrue(settings.check_app_token(options["panel_pin"]))
+        self.assertFalse(settings.check_app_token("87654321"))
         self.assertNotIn(options["panel_pin"], repr(settings.__dict__))
         for invalid in ("12345", "123456789", "12a456", "１２３４５６", 123456):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
@@ -256,6 +256,65 @@ class CapabilityTests(unittest.TestCase):
                       operation_list=["eco", "electric"], operation_mode="eco", current_temperature=52), available)
         self.assertEqual([c["action"] for c in item["controls"]], ["set_operation_mode"])
         self.assertEqual(item["controls"][0]["options"], ["eco", "electric"])
+
+    def test_water_heater_temperature_power_and_away_controls(self):
+        settings = Settings(config(verified_actions=[WATER + ":set_temperature", WATER + ":turn_off", WATER + ":set_away_mode"]))
+        available = services("water_heater", set_temperature=["temperature"], set_operation_mode=["operation_mode"],
+                             turn_on=[], turn_off=[], set_away_mode=["away_mode"])
+        states = raw(WATER, "eco", supported_features=15, operation_list=["eco", "off"], operation_mode="eco",
+                     current_temperature=48.5, temperature=55, min_temp=35, max_temp=75, away_mode="off",
+                     showers_left=3, tank_power=True, access_token="never", mac_address="aa:bb", setup_url="http://x")
+        item = entity(WATER, settings, states, available)
+        controls = {c["action"]: c for c in item["controls"]}
+        self.assertEqual(set(controls), {"turn_on", "turn_off", "set_temperature", "set_operation_mode",
+                                         "away_mode_on", "away_mode_off"})
+        self.assertEqual((controls["set_temperature"]["min"], controls["set_temperature"]["max"],
+                          controls["set_temperature"]["step"], controls["set_temperature"]["value"]), (35, 75, 0.5, 55))
+        self.assertTrue(controls["away_mode_on"]["enabled"])
+        self.assertFalse(controls["turn_on"]["enabled"])
+        attrs = item["attributes"]
+        self.assertEqual((attrs["showers_left"], attrs["tank_power"], attrs["temperature"]), (3, True, 55))
+        for secret in ("access_token", "mac_address", "setup_url"):
+            self.assertNotIn(secret, attrs)
+        fake = FakeHA(states, available)
+        app = App(settings, fake)
+        app.action({"entity_id": WATER, "action": "set_temperature", "value": 52.5})
+        app.action({"entity_id": WATER, "action": "away_mode_on"})
+        self.assertEqual(fake.calls, [("water_heater", "set_temperature", {"entity_id": WATER, "temperature": 52.5}),
+                                      ("water_heater", "set_away_mode", {"entity_id": WATER, "away_mode": True})])
+        for body in ({"entity_id": WATER, "action": "set_temperature", "value": 90},
+                     {"entity_id": WATER, "action": "away_mode_on", "value": True}):
+            with self.subTest(body=body), self.assertRaises(PublicError):
+                app.action(body)
+
+    def test_fan_speeds_from_step_or_option(self):
+        fan_services = services("fan", turn_on=[], turn_off=[], set_percentage=["percentage"])
+        item = entity(FAN, self.settings, raw(FAN, supported_features=49, percentage=50, percentage_step=100 / 6), fan_services)
+        self.assertEqual(next(c for c in item["controls"] if c["action"] == "set_percentage")["speeds"], 6)
+        item = entity(FAN, self.settings, raw(FAN, supported_features=1, percentage=50, percentage_step=1), fan_services)
+        self.assertNotIn("speeds", item["controls"][0])
+        settings = Settings(config(fan_speeds=[FAN + ":6"]))
+        item = entity(FAN, settings, raw(FAN, supported_features=1, percentage=50, percentage_step=1), fan_services)
+        self.assertEqual(item["controls"][0]["speeds"], 6)
+        for value in ([FAN + ":1"], [FAN + ":11"], [LIGHT + ":6"], [FAN + ":6", FAN + ":4"], ["fan.unlisted:6"]):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                Settings(config(fan_speeds=value))
+
+    def test_pvpc_prices_and_weather_reach_the_panel(self):
+        pvpc, weather = "sensor.esios_pvpc", "weather.barcelona"
+        settings = Settings(config(entity_ids=[pvpc, weather]))
+        prices = {"price_%02dh" % hour: 0.1 + hour / 100 for hour in range(24)}
+        states = {**raw(pvpc, "0.13", unit_of_measurement="€/kWh", period="P2", min_price=0.1, max_price_at=23,
+                        price_next_day_05h=0.2, attribution="REE", **prices),
+                  **raw(weather, "cloudy", temperature=14.2, temperature_unit="°C", humidity=70, entity_picture="x")}
+        item = entity(pvpc, settings, states, {})
+        self.assertEqual(item["category"], "energy")
+        self.assertEqual(item["attributes"]["price_23h"], 0.33)
+        self.assertEqual((item["attributes"]["period"], item["attributes"]["price_next_day_05h"]), ("P2", 0.2))
+        self.assertNotIn("attribution", item["attributes"])
+        item = entity(weather, settings, states, {})
+        self.assertEqual(item["category"], "weather")
+        self.assertEqual(item["attributes"], {"temperature": 14.2, "temperature_unit": "°C", "humidity": 70})
 
     def test_fan_feature_flags_and_media_features_are_independent(self):
         fan_services = services("fan", turn_on=[], turn_off=[], set_percentage=["percentage"])
@@ -372,6 +431,33 @@ class ActionTests(unittest.TestCase):
         self.assertFalse(partial["ok"])
         self.assertIn("segona llum", partial["error"])
 
+    def test_lights_batch_brightness_and_warmth_fit_each_light(self):
+        other = "light.test_other"
+        settings = Settings(config(light_entity_ids=[LIGHT, other], verified_actions=[
+            LIGHT + ":brightness", other + ":brightness", LIGHT + ":color_temp_kelvin", other + ":color_temp_kelvin"]))
+        hue = dict(supported_color_modes=["color_temp", "xy"], brightness=100, color_temp_kelvin=3000)
+        states = {**raw(LIGHT, min_color_temp_kelvin=2000, max_color_temp_kelvin=6500, **hue),
+                  **raw(other, min_color_temp_kelvin=2200, max_color_temp_kelvin=4000, **hue)}
+        fake = FakeHA(states, services("light", turn_on=["brightness", "color_temp_kelvin"], turn_off=[]))
+        app = App(settings, fake)
+        result = app.lights_action({"entity_ids": [LIGHT, other], "action": "color_temp_kelvin", "value": 6000})
+        self.assertEqual((result["succeeded"], result["failed"]), (2, 0))
+        self.assertEqual([call[2]["color_temp_kelvin"] for call in fake.calls], [6000, 4000])
+        fake.calls.clear()
+        app.lights_action({"entity_ids": [LIGHT, other], "action": "brightness", "value": 128})
+        self.assertEqual(fake.calls, [("light", "turn_on", {"entity_id": LIGHT, "brightness": 128}),
+                                      ("light", "turn_on", {"entity_id": other, "brightness": 128})])
+        fake.calls.clear()
+        for body in ({"entity_ids": [LIGHT], "action": "brightness"},
+                     {"entity_ids": [LIGHT], "action": "brightness", "value": 0},
+                     {"entity_ids": [LIGHT], "action": "brightness", "value": 12.5},
+                     {"entity_ids": [LIGHT], "action": "brightness", "value": True},
+                     {"entity_ids": [LIGHT], "action": "color_temp_kelvin", "value": 100},
+                     {"entity_ids": [LIGHT], "action": "turn_on", "value": 1}):
+            with self.subTest(body=body), self.assertRaises(PublicError):
+                app.lights_action(body)
+        self.assertEqual(fake.calls, [])
+
     def test_lights_action_rejects_invalid_batches(self):
         for body in ({"entity_ids": [], "action": "turn_on"},
                      {"entity_ids": [LIGHT, LIGHT], "action": "turn_on"},
@@ -443,11 +529,9 @@ class HTTPTests(unittest.TestCase):
         self.port = self.server.server_address[1]
         self.host = "127.0.0.1:" + str(self.port)
         self.app.settings.allowed_hosts = {self.host}
-        self.origin = "http://" + self.host
         self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
         self.thread.start()
-        self.cookie = None
-        self.csrf = None
+        self.token = None
 
     def tearDown(self):
         self.server.shutdown()
@@ -458,11 +542,8 @@ class HTTPTests(unittest.TestCase):
         request_headers = dict(headers or {})
         if method == "POST":
             request_headers.setdefault("Content-Type", "application/json")
-            request_headers.setdefault("Origin", self.origin)
-        if self.cookie:
-            request_headers.setdefault("Cookie", self.cookie)
-        if self.csrf:
-            request_headers.setdefault("X-CSRF-Token", self.csrf)
+        if self.token:
+            request_headers.setdefault("Authorization", "Bearer " + self.token)
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
         conn.request(method, path, json.dumps(body) if body is not None else None, request_headers)
         response = conn.getresponse()
@@ -473,11 +554,8 @@ class HTTPTests(unittest.TestCase):
         return status, result, response_headers
 
     def login(self):
-        status, result, headers = self.call("/api/login", "POST", {"pin": self.options["panel_pin"]})
-        self.assertEqual(status, 200)
-        self.cookie = headers["Set-Cookie"].split(";", 1)[0]
-        self.csrf = result["csrf"]
-        return headers
+        """The app sends the panel PIN as a bearer token with every request."""
+        self.token = self.options["panel_pin"]
 
     def test_state_and_audit_require_authentication(self):
         for path in ["/api/state", "/api/audit"]:
@@ -533,7 +611,7 @@ class HTTPTests(unittest.TestCase):
             [{"entity_id": SHOWERS, "state": "3", "last_changed": "2026-11-03T10:00:00+00:00"}]]
         self.assertEqual(self.call("/api/climate-history?hours=24")[0], 401)
         self.login()
-        self.assertEqual(self.call("/api/climate-history?hours=12")[0], 400)
+        self.assertEqual(self.call("/api/climate-history?hours=13")[0], 400)
         status, result, _ = self.call("/api/climate-history?hours=24")
         self.assertEqual(status, 200)
         self.assertEqual(self.fake.history_requests, [([temperature, humidity], 24)])
@@ -547,72 +625,42 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(month["hours"], 720)
         self.assertEqual(self.fake.history_requests[-1], ([temperature, humidity], 720))
 
-    def test_login_cookie_csrf_and_logout_lifecycle(self):
-        headers = self.login()
-        self.assertIn("HttpOnly", headers["Set-Cookie"])
-        self.assertIn("SameSite=Strict", headers["Set-Cookie"])
-        self.assertIn("Path=/api", headers["Set-Cookie"])
-        self.assertEqual(self.call("/api/state")[0], 200)
-        self.assertEqual(self.call("/api/session")[1]["csrf"], self.csrf)
-        self.assertEqual(self.call("/api/logout", "POST", {})[0], 200)
-        self.assertEqual(self.call("/api/state")[0], 401)
-
-    def test_old_password_payload_does_not_log_in(self):
-        status, result, _ = self.call("/api/login", "POST", {"password": self.options["panel_pin"]})
-        self.assertEqual(status, 401)
-        self.assertEqual(result["error"], "PIN incorrecte.")
-        self.assertEqual(self.app.sessions, {})
-
     def test_host_and_network_guard_ignore_forwarded_headers(self):
         self.assertEqual(self.call("/api/session", headers={"Host": "evil.example"})[0], 403)
         self.app.settings.allowed_networks = []
         self.assertEqual(self.call("/api/session", headers={"X-Forwarded-For": "127.0.0.1"})[0], 403)
 
-    def test_cross_origin_login_is_blocked_even_with_valid_pin(self):
-        status = self.call("/api/login", "POST", {"pin": self.options["panel_pin"]},
-                           {"Origin": "http://evil.example", "Referer": self.origin + "/"})[0]
-        self.assertEqual(status, 403)
-        self.assertEqual(self.app.sessions, {})
-
-    def test_authenticated_writes_require_csrf_and_matching_origin(self):
-        self.login()
+    def test_there_is_no_web_panel_or_browser_session(self):
+        for path in ["/", "/index.html", "/app.js", "/style.css", "/assets/cuina.svg", "/diagnostics.html"]:
+            with self.subTest(path=path):
+                self.assertEqual(self.call(path)[0], 404)
+        for path in ["/api/login", "/api/logout"]:
+            with self.subTest(path=path):
+                self.assertEqual(self.call(path, "POST", {"pin": self.options["panel_pin"]})[0], 404)
+        # A browser cookie or CSRF header is not a credential.
         body = {"entity_id": LIGHT, "action": "turn_on"}
-        self.assertEqual(self.call("/api/action", "POST", body, {"X-CSRF-Token": "incorrect"})[0], 403)
-        self.assertEqual(self.call("/api/action", "POST", body, {"Origin": "null"})[0], 403)
+        self.assertEqual(self.call("/api/action", "POST", body, {"Cookie": "glass_rooms_session=x", "X-CSRF-Token": "x"})[0], 401)
+        self.assertEqual(self.call("/api/session")[1], {"authenticated": False, "preview": False})
         self.assertEqual(self.fake.calls, [])
+
+    def test_writes_require_the_bearer(self):
+        body = {"entity_id": LIGHT, "action": "turn_on"}
+        self.assertEqual(self.call("/api/action", "POST", body)[0], 401)
+        self.assertEqual(self.call("/api/lights", "POST", {"entity_ids": [LIGHT], "action": "turn_on"})[0], 401)
+        self.assertEqual(self.fake.calls, [])
+        self.login()
         self.assertEqual(self.call("/api/action", "POST", body)[0], 200)
         self.assertEqual(len(self.fake.calls), 1)
+        self.assertEqual(self.call("/api/action", "POST", {}, {"Content-Type": "text/plain"})[0], 415)
 
-    def test_light_batch_uses_one_rate_slot_and_requires_csrf(self):
+    def test_light_batch_uses_one_rate_slot(self):
         self.login()
         body = {"entity_ids": [LIGHT], "action": "turn_on"}
-        self.assertEqual(self.call("/api/lights", "POST", body, {"X-CSRF-Token": "incorrect"})[0], 403)
-        self.assertEqual(self.fake.calls, [])
         for _ in range(35):
             self.assertEqual(self.call("/api/lights", "POST", body)[0], 200)
         for _ in range(35):
             self.assertEqual(self.call("/api/action", "POST", {"entity_id": LIGHT, "action": "turn_on"})[0], 200)
         self.assertEqual(len(self.fake.calls), 70)
-
-    def test_safari_referer_fallback_and_json_requirement(self):
-        self.login()
-        # Direct HTTP request deliberately omits Origin to exercise Safari 9 fallback.
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
-        conn.request("POST", "/api/action", json.dumps({"entity_id": LIGHT, "action": "turn_on"}), {
-            "Content-Type": "application/json", "Referer": self.origin + "/", "Cookie": self.cookie,
-            "X-CSRF-Token": self.csrf})
-        response = conn.getresponse()
-        self.assertEqual(response.status, 200)
-        response.read()
-        conn.close()
-        self.assertEqual(self.call("/api/action", "POST", {}, {"Content-Type": "text/plain"})[0], 415)
-
-    def test_session_expiry_is_absolute_and_ip_bound(self):
-        self.login()
-        token = self.cookie.split("=", 1)[1]
-        self.assertIsNone(self.app.get_session(token, "192.168.1.10"))
-        self.app.sessions[token]["expires"] = time.monotonic() - 1
-        self.assertEqual(self.call("/api/state")[0], 401)
 
     def use_app_token(self):
         token = secrets.token_urlsafe(32)
@@ -633,7 +681,6 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(response.status, 200, response.read())
         conn.close()
         self.assertEqual(self.fake.calls, [("light", "turn_on", {"entity_id": LIGHT})])
-        self.assertEqual(self.call("/api/login", "POST", {"pin": self.options["panel_pin"]}, headers=headers)[0], 400)
 
     def test_native_app_accepts_panel_pin_as_bearer(self):
         headers = {"Authorization": "Bearer " + self.options["panel_pin"]}
@@ -669,7 +716,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(statuses[:5], [401] * 5)
         self.assertEqual(statuses[5], 429)
 
-    def test_only_allowlisted_public_files_and_cache_policy(self):
+    def test_no_files_are_served_and_cache_policy(self):
         for path in ["/data/options.json", "/server.py", "/../catalog.py", "/assets/../../server.py", "/%2e%2e/server.py"]:
             self.assertEqual(self.call(path)[0], 404)
         status, _, headers = self.call("/api/session")
@@ -677,19 +724,15 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(headers["Cache-Control"], "no-store")
         self.assertEqual(headers["X-Frame-Options"], "DENY")
         self.assertNotIn("Access-Control-Allow-Origin", headers)
-        status, _, headers = self.call("/assets/cuina.svg?v=1.0.16")
-        self.assertEqual(status, 200)
-        self.assertEqual(headers["Cache-Control"], "public, max-age=86400")
-        status, _, headers = self.call("/app.js?v=1.0.16")
-        self.assertEqual(status, 200)
-        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertNotIn("Set-Cookie", headers)
 
-    def test_login_rate_limit_and_body_size_limit(self):
+    def test_pin_rate_limit_and_body_size_limit(self):
         for _ in range(5):
-            self.assertEqual(self.call("/api/login", "POST", {"pin": "000000"})[0], 401)
-        self.assertEqual(self.call("/api/login", "POST", {"pin": "000000"})[0], 429)
+            self.assertEqual(self.call("/api/state", headers={"Authorization": "Bearer 000000"})[0], 401)
+        self.assertEqual(self.call("/api/state", headers={"Authorization": "Bearer 000000"})[0], 429)
         self.app.attempts.clear()
-        self.assertEqual(self.call("/api/login", "POST", {"pin": "0" * 5000})[0], 413)
+        self.login()
+        self.assertEqual(self.call("/api/action", "POST", {"entity_id": LIGHT, "action": "x" * 5000})[0], 413)
 
     def test_http_does_not_print_pin_or_bodies(self):
         captured = io.StringIO()
@@ -698,14 +741,15 @@ class HTTPTests(unittest.TestCase):
             self.call("/api/action", "POST", {"entity_id": ALARM, "action": "alarm_disarm", "code": "fixture-pin"})
         self.assertEqual(captured.getvalue(), "")
 
-    def test_preview_http_has_no_real_data_and_rejects_login(self):
+    def test_preview_http_has_no_real_data_and_rejects_writes(self):
         self.app.settings.preview = True
         self.assertEqual(self.call("/api/state")[0], 200)
-        self.assertEqual(self.call("/api/login", "POST", {"pin": self.options["panel_pin"]})[0], 403)
+        self.login()
+        self.assertEqual(self.call("/api/action", "POST", {"entity_id": LIGHT, "action": "turn_on"})[0], 403)
         self.assertEqual(self.fake.reads, 0)
 
     @unittest.skipUnless(shutil.which("openssl"), "OpenSSL CLI needed for ephemeral local TLS certificate")
-    def test_direct_tls_sets_secure_cookie_and_handshake_does_not_block_accept(self):
+    def test_direct_tls_and_handshake_does_not_block_accept(self):
         with tempfile.TemporaryDirectory(prefix="glass-rooms-tls-test-") as directory:
             cert, key = directory + "/cert.pem", directory + "/key.pem"
             subprocess.run([shutil.which("openssl"), "req", "-x509", "-newkey", "rsa:2048", "-nodes",
@@ -721,11 +765,9 @@ class HTTPTests(unittest.TestCase):
             try:
                 client_context = ssl.create_default_context(cafile=cert)
                 conn = http.client.HTTPSConnection("127.0.0.1", self.port, context=client_context, timeout=3)
-                conn.request("POST", "/api/login", json.dumps({"pin": self.options["panel_pin"]}),
-                             {"Content-Type": "application/json", "Origin": "https://" + self.host})
+                conn.request("GET", "/api/state", headers={"Authorization": "Bearer " + self.options["panel_pin"]})
                 response = conn.getresponse()
                 self.assertEqual(response.status, 200)
-                self.assertIn("; Secure", response.getheader("Set-Cookie"))
                 response.read()
                 conn.close()
             finally:

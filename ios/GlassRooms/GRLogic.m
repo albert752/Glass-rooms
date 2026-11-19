@@ -47,6 +47,7 @@ static NSCalendar *GRCalendar(void) {
     return on ? @"Actiu" : @"Inactiu";
   }
   if([domain isEqualToString:@"scene"]) { return [@"Estat HA: " stringByAppendingString:state]; }
+  if([domain isEqualToString:@"weather"]) { return [self weatherCondition:state]; }
   if([domain isEqualToString:@"sensor"]) {
     NSString *unit = GRStr(attributes[@"unit_of_measurement"]);
     return unit.length ? [NSString stringWithFormat:@"%@ %@", state, unit] : state;
@@ -228,6 +229,8 @@ static NSCalendar *GRCalendar(void) {
     NSNumber *current = GRNum(a[@"current_temperature"]);
     NSString *unit = GRStr(a[@"temperature_unit"]);
     if(current) { [parts addObject:[NSString stringWithFormat:@"Temperatura actual: %@ %@", GRFormatNumber(current.doubleValue), unit.length ? unit : @"°"]]; }
+    NSNumber *target = GRNum(a[@"temperature"]);
+    if(target) { [parts addObject:[NSString stringWithFormat:@"Objectiu: %@ %@", GRFormatNumber(target.doubleValue), unit.length ? unit : @"°"]]; }
     if(GRStr(a[@"operation_mode"]).length) { [parts addObject:[@"Mode: " stringByAppendingString:a[@"operation_mode"]]]; }
   }
   if([domain isEqualToString:@"light"]) {
@@ -269,5 +272,68 @@ static NSCalendar *GRCalendar(void) {
   NSDateComponents *c = [GRCalendar() components:NSCalendarUnitHour|NSCalendarUnitMinute|NSCalendarUnitSecond fromDate:date];
   return [NSString stringWithFormat:@"Actualitzat a les %@:%@:%@", GRPad2(c.hour), GRPad2(c.minute), GRPad2(c.second)];
 }
+
++ (NSDictionary *)weather:(NSArray *)entities connected:(BOOL)connected {
+  if(!connected) { return nil; }
+  for(NSDictionary *entity in [self entities:entities inCategory:@"weather"]) {
+    if([self isOk:entity] && GRNum(GRDict(entity[@"attributes"])[@"temperature"])) { return entity; }
+  }
+  return nil;
+}
+
++ (NSString *)weatherCondition:(NSString *)state {
+  NSDictionary *names = @{@"clear-night": @"serè", @"cloudy": @"ennuvolat", @"fog": @"boira", @"hail": @"calamarsa",
+                          @"lightning": @"tempesta", @"lightning-rainy": @"tempesta i pluja", @"partlycloudy": @"mig ennuvolat",
+                          @"pouring": @"xàfecs", @"rainy": @"pluja", @"snowy": @"neu", @"snowy-rainy": @"aiguaneu",
+                          @"sunny": @"assolellat", @"windy": @"vent", @"windy-variant": @"vent i núvols", @"exceptional": @"excepcional"};
+  return names[state ?: @""] ?: (state ?: @"");
+}
+
++ (NSString *)weatherLine:(NSArray *)entities connected:(BOOL)connected {
+  NSDictionary *weather = [self weather:entities connected:connected];
+  if(!weather) { return nil; }
+  NSNumber *temperature = GRNum(GRDict(weather[@"attributes"])[@"temperature"]);
+  NSString *name = GRStr(weather[@"name"]) ?: @"Exterior";
+  NSString *condition = [self weatherCondition:GRStr(weather[@"state"])];
+  return [NSString stringWithFormat:@"%@ %@°%@", name, [self shortNumber:temperature.doubleValue], condition.length ? [@" · " stringByAppendingString:condition] : @""];
+}
+
++ (NSInteger)fanSpeedForPercentage:(double)percentage speeds:(NSInteger)speeds {
+  if(speeds < 1 || percentage <= 0) { return 0; }
+  return MAX(1, MIN(speeds, (NSInteger)ceil(percentage * speeds / 100 - 1e-9)));
+}
+
++ (NSInteger)percentageForFanSpeed:(NSInteger)speed speeds:(NSInteger)speeds {
+  if(speeds < 1 || speed <= 0) { return 0; }
+  return (NSInteger)floor(MIN(speed, speeds) * 100.0 / speeds + 1e-9);
+}
+
++ (NSDictionary *)pvpcSensor:(NSArray *)entities {
+  for(NSDictionary *entity in [self entities:entities inCategory:@"energy"]) { return entity; }
+  return nil;
+}
+
++ (NSArray *)pvpcPrices:(NSDictionary *)sensor tomorrow:(BOOL)tomorrow {
+  NSDictionary *a = GRDict(sensor[@"attributes"]) ?: @{};
+  NSMutableArray *prices = [NSMutableArray arrayWithCapacity:24];
+  BOOL any = NO;
+  for(NSInteger hour = 0; hour < 24; hour++) {
+    NSNumber *price = GRNum(a[[NSString stringWithFormat:tomorrow ? @"price_next_day_%02ldh" : @"price_%02ldh", (long)hour]]);
+    [prices addObject:price ?: [NSNull null]];
+    any = any || price != nil;
+  }
+  return any ? prices : @[];
+}
+
++ (NSString *)priceLevel:(double)price prices:(NSArray *)prices {
+  NSMutableArray *sorted = [NSMutableArray array];
+  for(id value in prices) { if(GRNum(value)) { [sorted addObject:value]; } }
+  if(sorted.count < 3) { return @"normal"; }
+  [sorted sortUsingSelector:@selector(compare:)];
+  double low = [sorted[sorted.count / 3 - 1] doubleValue], high = [sorted[sorted.count - sorted.count / 3] doubleValue];
+  return price <= low ? @"low" : (price >= high ? @"high" : @"normal");
+}
+
++ (NSString *)centsText:(double)euros { return [self shortNumber:euros * 100]; }
 
 @end

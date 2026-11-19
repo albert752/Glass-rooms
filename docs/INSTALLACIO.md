@@ -34,18 +34,13 @@ El resultat ha de tenir aquesta forma:
     Dockerfile
     server.py
     catalog.py
-    www/
-        index.html
-        app.js
-        style.css
-        assets/
 ```
 
-Amb el nom antic, la mateixa estructura és `/addons/glass_rooms/`. El codi no necessita ser a `/config/www`: els recursos de `/local/` de Home Assistant són accessibles sense autenticació i no són un lloc per a secrets. [Advertiment oficial sobre `/local/`](https://www.home-assistant.io/integrations/http/#hosting-files).
+Amb el nom antic, la mateixa estructura és `/addons/glass_rooms/`. Des de 1.2.0 no hi ha carpeta `www`: el servidor és només l'API de l'app per a iPad. Si actualitzes des de 1.1.x, esborra la carpeta `www` antiga.
 
 ## 3. Instal·la l'aplicació local
 
-A **Configuració → Aplicacions → Instal·la una aplicació**, obre el menú i selecciona **Comprova si hi ha actualitzacions**. Refresca la pàgina i busca **Glass Rooms** a **Aplicacions locals**. Prem **Instal·la**. Supervisor construirà la imatge; la primera construcció necessita accés sortint al registre d'imatges. L'ús quotidià del panell és local. Si no apareix, comprova `config.yaml` i el registre de Supervisor. [Instal·lació oficial d'una aplicació local](https://contributors.home-assistant.io/apps/first-app/).
+A **Configuració → Aplicacions → Instal·la una aplicació**, obre el menú i selecciona **Comprova si hi ha actualitzacions**. Refresca la pàgina i busca **Glass Rooms** a **Aplicacions locals**. Prem **Instal·la**. Supervisor construirà la imatge; la primera construcció necessita accés sortint al registre d'imatges. L'ús quotidià és local. Si no apareix, comprova `config.yaml` i el registre de Supervisor. [Instal·lació oficial d'una aplicació local](https://contributors.home-assistant.io/apps/first-app/).
 
 No l'iniciïs encara. Primer configura el transport i l'accés.
 
@@ -53,9 +48,9 @@ No l'iniciïs encara. Primer configura el transport i l'accés.
 
 | Opció | Límit concret | Pas següent |
 |---|---|---|
-| HTTPS directe al panell, recomanat | Cal que iOS 9 accepti el certificat, el nom i la cadena de confiança i pugui negociar TLS amb aquest servidor. Encara no s'ha provat. | Instal·la un certificat adequat i prova l'obertura a l'iPad abans d'introduir el PIN. |
-| HTTP directe només a casa | El trànsit no està xifrat: el PIN d'accés, la sessió i qualsevol PIN d'alarma poden ser interceptats dins de la xarxa. La llista de xarxes no xifra res. | Només continua si acceptes explícitament aquest límit i controles la xarxa. Mantén les accions d'alarma bloquejades mentre no hagis decidit com protegir-ne el PIN. |
-| Si l'iPad no accepta HTTPS | El codi web no pot solucionar una incompatibilitat de TLS o de confiança del sistema operatiu. | Revisa la cadena del certificat i prova un nom local correcte; si segueix fallant, tria conscientment HTTP local amb les limitacions anteriors o un dispositiu més recent. |
+| HTTPS directe al panell, recomanat | Cal que iOS 9 accepti el certificat, el nom i la cadena de confiança i pugui negociar TLS amb aquest servidor. Si no el reconeix, l'app permet fixar-lo per empremta SHA-256. | Instal·la un certificat adequat i comprova'n l'empremta a l'app abans d'introduir el PIN. |
+| HTTP directe només a casa | El trànsit no està xifrat: el PIN d'accés, que l'app envia amb cada petició, i qualsevol PIN d'alarma poden ser interceptats dins de la xarxa. La llista de xarxes no xifra res. | Només continua si acceptes explícitament aquest límit i controles la xarxa. Mantén les accions d'alarma bloquejades mentre no hagis decidit com protegir-ne el PIN. |
+| Si l'iPad no accepta HTTPS | L'app no pot solucionar una incompatibilitat de TLS del sistema operatiu. | Revisa la cadena del certificat i prova un nom local correcte; si segueix fallant, tria conscientment HTTP local amb les limitacions anteriors o un dispositiu més recent. |
 
 La URL de Home Assistant facilitada també usa HTTP. La pàgina d'administració on introdueixes `panel_pin` transmetrà aquesta dada segons el seu propi transport. Configura-la des d'un accés d'administració segur; si només disposes d'aquest HTTP, la decisió sobre el risc també s'aplica a aquest pas.
 
@@ -72,15 +67,16 @@ A la pestanya **Configuració** de Glass Rooms:
 | Camp | Valor que has de decidir |
 |---|---|
 | `light_entity_ids` | Llista de qualsevol nombre d'IDs `light.*`, incloses llums noves. |
-| `entity_ids` | Llista opcional d'altres entitats de qualsevol domini, com sensors, interruptors, escenes o ventiladors. |
+| `entity_ids` | Llista opcional d'altres entitats de qualsevol domini: sensors, interruptors, escenes, ventiladors, l'escalfador, comandaments `remote.*`, el sensor del preu de la llum (PVPC) o el temps `weather.*` (per exemple, de Barcelona). |
 | Sensors ambientals | Afegeix els IDs reals `sensor.*` de temperatura i humitat a `entity_ids`. Han de publicar `device_class` igual a `temperature` o `humidity`; el mòdul Clima els detecta automàticament. |
-| `panel_pin` | Un PIN únic de 6 a 8 dígits, introduït només aquí. No és el PIN d'alarma ni cap credencial de Home Assistant. |
+| `panel_pin` | Un PIN únic de 6 a 8 dígits, introduït només aquí i a l'app per a iPad. No és el PIN d'alarma ni cap credencial de Home Assistant. |
 | `app_token` | Opcional; deixa'l buit. L'[app nativa per a iPad](APP_IOS.md) s'identifica amb `panel_pin`. Si el vols fer servir, un valor aleatori de 32 a 128 caràcters `A-Z a-z 0-9 _ -` que l'app també accepta. |
-| `allowed_hosts` | L'adreça exacta amb què obriràs el panell, inclòs el port si escau: `ADREÇA_HA:8099` per a la URL inicial. Afegeix un nom local només si l'utilitzes realment. Sense `http://` ni rutes. |
+| `allowed_hosts` | L'adreça exacta que escriuràs a l'app, inclòs el port: `ADREÇA_HA:8099`. Afegeix un nom local només si l'utilitzes realment. Sense `http://` ni rutes. |
 | `allowed_networks` | La xarxa CIDR real de casa, o IPs concretes `/32` amb reserva DHCP. No es pot deduir la màscara només de l'adreça `ADREÇA_HA`. Consulta-la al router. |
 | `verified_actions` | Mantén `[]` fins a completar les proves. Després, afegeix `entity_id:servei`; només es mostra si Home Assistant publica el servei per aquell domini. |
 | `room_assignments` | Mantén `[]` fins a confirmar ubicacions. Afegeix `entity_id:habitacio` per situar una entitat a una estança. |
-| `remote_buttons` | Opcional. Botons per a un emissor `remote.*` amb ordres apreses (LocalTuya, Broadlink…), un per línia: `remote.entitat:dispositiu:ordre:Etiqueta`. Dispositiu i ordre són els noms que vas fer servir en aprendre el codi. Cal també `remote.entitat:send_command` a `verified_actions`, i l'emissor a `entity_ids`. |
+| `remote_buttons` | Opcional. Botons per a un emissor `remote.*` amb ordres apreses (LocalTuya, Broadlink…), un per línia: `remote.entitat:dispositiu:ordre:Etiqueta`, fins a 48 per emissor. Dispositiu i ordre són els noms que vas fer servir en aprendre el codi. Cal també `remote.entitat:send_command` a `verified_actions`, i l'emissor a `entity_ids`. |
+| `fan_speeds` | Opcional. Nombre de velocitats d'un ventilador que no publica `percentage_step`: `fan.entitat:6`. Si el publica, no cal. |
 | `alarm_modes` | Mantén `[]` fins a revisar els modes habilitats d'Alarmo. |
 | `alarm_arm_code`, `alarm_disarm_code` | Mantén `unknown` fins a confirmar la política de codi. No són camps per escriure el PIN. |
 | `tls_certfile`, `tls_keyfile` | Noms de fitxer a `/ssl` per HTTPS, o buits si has triat HTTP amb els límits anteriors. |
@@ -104,15 +100,15 @@ tls_keyfile: ""
 
 Amb PIN absent o fora dels 6 a 8 dígits, hosts buits o xarxes buides, el servidor rebutja l'arrencada. No ho solucionis obrint totes les adreces: defineix només els clients de confiança. Si fas servir una xarxa IPv6, comprova també les regles IPv6 del router; no n'afegeixis cap si no la necessites.
 
-Supervisor escriu les opcions privades a **`/data/options.json` dins del contenidor**, abans de cada arrencada. Glass Rooms crea l'inventari exclusivament a partir de `light_entity_ids` i `entity_ids`; el codi no enumera cap instància. Les opcions buides donen un inventari buit. No creïs aquest fitxer a `www`, no el publiquis ni editis el codi per afegir-hi IDs o contrasenyes. [Entorn i emmagatzematge oficials d'aplicacions](https://contributors.home-assistant.io/apps/reference/environment/).
+Supervisor escriu les opcions privades a **`/data/options.json` dins del contenidor**, abans de cada arrencada. Glass Rooms crea l'inventari exclusivament a partir de `light_entity_ids` i `entity_ids`; el codi no enumera cap instància. Les opcions buides donen un inventari buit. No el publiquis ni editis el codi per afegir-hi IDs o contrasenyes. [Entorn i emmagatzematge oficials d'aplicacions](https://contributors.home-assistant.io/apps/reference/environment/).
 
 ## 6. Inicia i comprova només la lectura
 
-1. A la configuració de xarxa de l'aplicació, conserva el port `8099/tcp` publicat com `8099`, si està lliure. Si el canvies, adapta `allowed_hosts` i la URL del navegador.
+1. A la configuració de xarxa de l'aplicació, conserva el port `8099/tcp` publicat com `8099`, si està lliure. Si el canvies, adapta `allowed_hosts` i l'adreça de l'app.
 2. Desa, inicia Glass Rooms i revisa el registre. No enganxis en converses opcions privades ni registres amb dades sensibles.
-3. A casa, obre `https://ADREÇA_HA:8099` si el certificat cobreix aquesta IP, o el nom local cobert pel certificat. Si has triat HTTP, obre `http://ADREÇA_HA:8099`.
-4. Inicia sessió al panell. Ha d'indicar connexió amb Home Assistant i mostrar l'hora de lectura. Compara dos o tres estats amb Home Assistant. Si no es connecta, segueix [la resolució d'errors](MANTENIMENT.md).
+3. A l'[app per a iPad](APP_IOS.md), a Ajustos, escriu `https://ADREÇA_HA:8099` (o el nom local cobert pel certificat) o, si has triat HTTP, `http://ADREÇA_HA:8099`, i el PIN del panell.
+4. Toca **Desa i connecta**. L'app ha d'indicar connexió amb Home Assistant i mostrar l'hora de lectura. Obrir aquesta adreça amb un navegador respon «Recurs no trobat»: des de 1.2.0 no hi ha panell web. Compara dos o tres estats amb Home Assistant. Si no es connecta, segueix [la resolució d'errors](MANTENIMENT.md).
 5. Les accions continuen bloquejades. Completa [la validació](VALIDACIO.md) abans d'activar-ne cap.
 6. Al router, comprova que no hi ha redireccions WAN, túnels ni regles UPnP per al port del panell. Si tens xarxa de convidats, comprova que no hi pot accedir. Les regles del servidor complementen aquesta separació; no substitueixen el tallafoc.
 
-L'accés del servidor a Home Assistant passa internament per `http://supervisor/core/api`; no es configura un token de llarga durada ni s'introdueix la URL `:8080` al JavaScript. L'aplicació necessita `homeassistant_api: true`, que té privilegis amplis a Core: el codi només llegeix entitats declarades a les opcions i només envia serveis explícitament enumerats a `verified_actions`. [Permisos del proxy de Supervisor](https://contributors.home-assistant.io/apps/guides/communication/).
+L'accés del servidor a Home Assistant passa internament per `http://supervisor/core/api`; no es configura un token de llarga durada ni la URL de Home Assistant a l'app. L'aplicació necessita `homeassistant_api: true`, que té privilegis amplis a Core: el codi només llegeix entitats declarades a les opcions i només envia serveis explícitament enumerats a `verified_actions`. [Permisos del proxy de Supervisor](https://contributors.home-assistant.io/apps/guides/communication/).

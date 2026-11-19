@@ -36,6 +36,25 @@ static NSDictionary *light(NSString *entityId, NSString *state, NSString *status
 
 static void logicTests(void) {
   CHECK([GRLogic rooms].count == 8);
+  // Fan speeds as Home Assistant converts them (CREATE fans: 6 speeds).
+  CHECK([GRLogic percentageForFanSpeed:1 speeds:6] == 16 && [GRLogic percentageForFanSpeed:4 speeds:6] == 66 && [GRLogic percentageForFanSpeed:6 speeds:6] == 100);
+  for(NSInteger speed = 1; speed <= 6; speed++) { CHECK([GRLogic fanSpeedForPercentage:[GRLogic percentageForFanSpeed:speed speeds:6] speeds:6] == speed); }
+  CHECK([GRLogic fanSpeedForPercentage:0 speeds:6] == 0 && [GRLogic fanSpeedForPercentage:17 speeds:6] == 2);
+  // PVPC: the cheapest 8 hours are "low", the dearest 8 "high".
+  NSMutableDictionary *priceAttributes = [NSMutableDictionary dictionary];
+  for(NSInteger hour = 0; hour < 24; hour++) { priceAttributes[[NSString stringWithFormat:@"price_%02ldh", (long)hour]] = @(0.10 + hour / 100.0); }
+  NSDictionary *pvpc = @{@"entity_id": @"sensor.pvpc", @"domain": @"sensor", @"category": @"energy", @"state": @"0.15", @"status": @"ok", @"attributes": priceAttributes};
+  NSArray *prices = [GRLogic pvpcPrices:pvpc tomorrow:NO];
+  CHECK(prices.count == 24 && [GRLogic pvpcPrices:pvpc tomorrow:YES].count == 0);
+  CHECK([[GRLogic priceLevel:0.17 prices:prices] isEqualToString:@"low"] && [[GRLogic priceLevel:0.18 prices:prices] isEqualToString:@"normal"]);
+  CHECK([[GRLogic priceLevel:0.26 prices:prices] isEqualToString:@"high"] && [[GRLogic priceLevel:0.25 prices:prices] isEqualToString:@"normal"]);
+  CHECK([[GRLogic centsText:0.1234] isEqualToString:@"12,3"]);
+  CHECK([GRLogic pvpcSensor:@[pvpc]] == pvpc);
+  // Outdoor weather line.
+  NSDictionary *weather = @{@"entity_id": @"weather.barcelona", @"domain": @"weather", @"category": @"weather", @"name": @"Barcelona", @"state": @"cloudy",
+                            @"status": @"ok", @"attributes": @{@"temperature": @14.24}};
+  CHECK([[GRLogic weatherLine:@[weather] connected:YES] isEqualToString:@"Barcelona 14,2° · ennuvolat"], @"%@", [GRLogic weatherLine:@[weather] connected:YES]);
+  CHECK([GRLogic weatherLine:@[weather] connected:NO] == nil);
   CHECK([[GRLogic stateTextForEntity:light(@"light.a", @"on", @"ok", YES) connected:YES demo:NO] isEqualToString:@"Encès"]);
   CHECK([[GRLogic stateTextForEntity:light(@"light.a", @"on", @"ok", YES) connected:NO demo:NO] isEqualToString:@"Pendent de connexió"]);
   CHECK([[GRLogic stateTextForEntity:light(@"light.a", nil, @"ok", YES) connected:YES demo:NO] isEqualToString:@"Estat desconegut"]);

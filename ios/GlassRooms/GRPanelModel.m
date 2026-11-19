@@ -262,6 +262,30 @@ static const NSTimeInterval GRUnresponsiveBlock = 120;
   }];
 }
 
+- (void)adjustLights:(NSArray<NSDictionary *> *)lights action:(NSString *)action value:(NSNumber *)value {
+  if(self.busy || !self.connected || self.preview || !lights.count || !value) { return; }
+  NSMutableArray *ids = [NSMutableArray array];
+  for(NSDictionary *light in lights) {
+    if([GRStr(light[@"status"]) isEqualToString:@"ok"] && [GRLogic entity:light hasEnabledAction:action]) { [ids addObject:light[@"entity_id"]]; }
+  }
+  if(!ids.count) { [self.delegate panelModel:self showToast:@"Cap llum té aquesta ordre verificada."]; return; }
+  self.busy = YES;
+  NSUInteger generation = _clientGeneration;
+  [self.client POST:@"/api/lights" body:@{@"entity_ids": ids, @"action": action, @"value": value} timeout:60 completion:^(NSString *error, id data, NSInteger status) {
+    if(generation != self->_clientGeneration) { return; }
+    self.busy = NO;
+    if(status == 401) { [self requireConfiguration:error]; return; }
+    NSNumber *succeeded = GRNum(data[@"succeeded"]), *failed = GRNum(data[@"failed"]);
+    if(error) { [self.delegate panelModel:self showToast:error]; }
+    else if(![data[@"ok"] isEqual:@YES]) {
+      [self.delegate panelModel:self showToast:[NSString stringWithFormat:@"Ordres enviades: %@. Sense enviar: %@. %@", succeeded ?: @0, failed ?: @0, GRStr(data[@"error"]) ?: @""]];
+    } else { [self.delegate panelModel:self showToast:nil]; }
+    [self refresh:YES];
+    // Brightness and colour switch a light on, so they are confirmed like an "on" command.
+    if(succeeded.integerValue > 0) { [self scheduleActionRefreshes:ids action:@"turn_on"]; }
+  }];
+}
+
 - (void)clearActionRefreshes {
   for(GRTimer *timer in _actionRefreshTimers) { [timer cancel]; }
   [_actionRefreshTimers removeAllObjects];

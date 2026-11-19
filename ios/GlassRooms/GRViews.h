@@ -25,6 +25,8 @@ typedef NS_ENUM(NSInteger, GRButtonStyle) {
 @property (nonatomic) GRButtonStyle style;
 @property (nonatomic) BOOL selectedLook;
 @property (nonatomic) CGFloat minimumHeight;
+// Title size instead of the style's own (0 keeps the style's).
+@property (nonatomic) CGFloat fontSize;
 @property (nonatomic, copy, nullable) void (^handler)(GRButton *button);
 - (void)applyTheme;
 @end

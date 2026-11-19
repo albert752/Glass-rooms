@@ -113,8 +113,12 @@ static double GRNiceStep(double raw) {
   [area addLineToPoint:CGPointMake([self pointAt:0].x, CGRectGetMaxY(plot))];
   [area closePath];
   [[color colorWithAlphaComponent:t.night ? .1 : .14] setFill]; [area fill];
+  CGContextRef context = UIGraphicsGetCurrentContext();
+  CGContextSaveGState(context);
+  if(t.glow > 0) { CGContextSetShadowWithColor(context, CGSizeZero, 8, [color colorWithAlphaComponent:t.glow].CGColor); }
   line.lineWidth = 2.5; line.lineCapStyle = kCGLineCapRound; line.lineJoinStyle = kCGLineJoinRound;
   [color setStroke]; [line stroke];
+  CGContextRestoreGState(context);
   // Selected point: guide line and marker.
   CGPoint selected = [self pointAt:(NSUInteger)_selectedIndex];
   UIBezierPath *guide = [UIBezierPath bezierPath];
@@ -149,14 +153,16 @@ static double GRNiceStep(double raw) {
 
 @end
 
-@implementation GRSparklineView
+@implementation GRSparklineView {
+  double _minimum, _maximum, _last;
+}
 
 - (instancetype)initWithFrame:(CGRect)frame {
   if((self = [super initWithFrame:frame])) { self.opaque = NO; self.backgroundColor = [UIColor clearColor]; self.contentMode = UIViewContentModeRedraw; }
   return self;
 }
 
-// Averages into at most 18 buckets so the sensor's 0.1° steps do not read as noise.
+// Averages into at most 18 buckets so the sensor's 0.1° steps do not read as noise; the labels keep the real extremes.
 - (void)setValues:(NSArray<NSNumber *> *)values {
   NSUInteger buckets = MIN(values.count, (NSUInteger)18);
   NSMutableArray *smooth = [NSMutableArray arrayWithCapacity:buckets];
@@ -166,23 +172,51 @@ static double GRNiceStep(double raw) {
     for(NSUInteger i = start; i < end; i++) { total += values[i].doubleValue; }
     [smooth addObject:@(total / (end - start))];
   }
+  _minimum = values.count ? values[0].doubleValue : 0; _maximum = _minimum;
+  for(NSNumber *value in values) { _minimum = MIN(_minimum, value.doubleValue); _maximum = MAX(_maximum, value.doubleValue); }
+  _last = values.lastObject.doubleValue;
   _values = smooth;
   [self setNeedsDisplay];
+}
+
+- (NSString *)text:(double)value {
+  return self.humidity ? [NSString stringWithFormat:@"%ld%%", GRRound(value)] : [[GRLogic shortNumber:value] stringByAppendingString:@"°"];
 }
 
 - (void)drawRect:(CGRect)rect {
   if(self.values.count < 2) { return; }
   GRTheme *t = [GRTheme current];
+  CGContextRef context = UIGraphicsGetCurrentContext();
   CGSize size = self.bounds.size;
-  double minimum = self.values[0].doubleValue, maximum = minimum;
-  for(NSNumber *value in self.values) { minimum = MIN(minimum, value.doubleValue); maximum = MAX(maximum, value.doubleValue); }
-  double span = MAX(maximum - minimum, .5);
-  CGFloat top = 6, height = size.height - top - 4;
+  UIColor *color = self.humidity ? t.humidityLine : t.accent;
+  // Right-hand column for the maximum and minimum labels.
+  NSDictionary *small = @{NSFontAttributeName: GRDigits(11, UIFontWeightRegular), NSForegroundColorAttributeName: t.muted};
+  NSString *maxText = [@"màx " stringByAppendingString:[self text:_maximum]], *minText = [@"mín " stringByAppendingString:[self text:_minimum]];
+  CGFloat labelWidth = ceil(MAX([maxText sizeWithAttributes:small].width, [minText sizeWithAttributes:small].width)) + 8;
+  CGFloat width = MAX(20, size.width - labelWidth);
+  double span = MAX(_maximum - _minimum, self.humidity ? 1 : .2);
+  double floor = _minimum - (span - (_maximum - _minimum)) / 2;
+  CGFloat top = 7, height = size.height - top - 7;
+  CGFloat (^yFor)(double) = ^CGFloat(double value) { return top + height - (value - floor) / span * height; };
+
+  // Dashed guides at the period's maximum and minimum.
+  CGFloat maxY = round(yFor(_maximum)) + .5, minY = round(yFor(_minimum)) + .5;
+  for(NSNumber *y in @[@(maxY), @(minY)]) {
+    UIBezierPath *guide = [UIBezierPath bezierPath];
+    [guide moveToPoint:CGPointMake(0, y.doubleValue)]; [guide addLineToPoint:CGPointMake(width, y.doubleValue)];
+    CGFloat dash[] = {3, 3};
+    [guide setLineDash:dash count:2 phase:0];
+    guide.lineWidth = 1; [[t.muted colorWithAlphaComponent:.6] setStroke]; [guide stroke];
+  }
+  CGFloat textHeight = [maxText sizeWithAttributes:small].height;
+  [maxText drawAtPoint:CGPointMake(width + 6, MAX(0, maxY - textHeight / 2)) withAttributes:small];
+  [minText drawAtPoint:CGPointMake(width + 6, MIN(size.height - textHeight, minY - textHeight / 2)) withAttributes:small];
+
   UIBezierPath *line = [UIBezierPath bezierPath];
   NSUInteger count = self.values.count;
   CGPoint previous = CGPointZero;
   for(NSUInteger i = 0; i < count; i++) {
-    CGPoint point = CGPointMake(size.width * i / (count - 1), top + height - (self.values[i].doubleValue - minimum) / span * height);
+    CGPoint point = CGPointMake(width * i / (count - 1), yFor(i == count - 1 ? _last : self.values[i].doubleValue));
     if(i == 0) { [line moveToPoint:point]; }
     else {
       // Horizontal-tangent curves read as a calm trend rather than a jagged sensor trace.
@@ -192,13 +226,23 @@ static double GRNiceStep(double raw) {
     previous = point;
   }
   UIBezierPath *area = [line copy];
-  [area addLineToPoint:CGPointMake(size.width, size.height)];
+  [area addLineToPoint:CGPointMake(width, size.height)];
   [area addLineToPoint:CGPointMake(0, size.height)];
   [area closePath];
-  UIColor *color = self.humidity ? t.humidityLine : t.accent;
   [[color colorWithAlphaComponent:t.night ? .09 : .14] setFill]; [area fill];
+  CGContextSaveGState(context);
+  if(t.glow > 0) { CGContextSetShadowWithColor(context, CGSizeZero, 6, [color colorWithAlphaComponent:t.glow].CGColor); }
   line.lineWidth = 2; line.lineCapStyle = kCGLineCapRound; line.lineJoinStyle = kCGLineJoinRound;
   [color setStroke]; [line stroke];
+  // The latest reading, with its value just above the point.
+  UIBezierPath *dot = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(previous.x - 3.5, previous.y - 3.5, 7, 7)];
+  [color setFill]; [dot fill];
+  CGContextRestoreGState(context);
+  NSDictionary *strong = @{NSFontAttributeName: GRDigits(11, UIFontWeightMedium), NSForegroundColorAttributeName: color};
+  NSString *now = [self text:_last];
+  CGSize nowSize = [now sizeWithAttributes:strong];
+  CGFloat nowY = previous.y - nowSize.height - 3 < 0 ? previous.y + 4 : previous.y - nowSize.height - 3;
+  [now drawAtPoint:CGPointMake(MAX(0, previous.x - nowSize.width - 6), nowY) withAttributes:strong];
 }
 
 @end

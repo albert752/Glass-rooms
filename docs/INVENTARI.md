@@ -6,15 +6,16 @@ Glass Rooms no incorpora cap inventari d’instància ni pressuposa que els disp
 
 ## Preguntes per completar a casa
 
-1. Quines versions exactes de Core, Supervisor i OS hi ha, i quin accés local tens: Samba, Terminal/SSH o només web?
-2. Quina és la subxarxa real de casa i quines IPs han de poder obrir el panell? La IP de Home Assistant no determina la màscara.
+1. Quines versions exactes de Core, Supervisor i OS hi ha, i quin accés local tens: Samba, Terminal/SSH o només la interfície web de Home Assistant?
+2. Quina és la subxarxa real de casa i quines IPs han de poder connectar amb el panell? La IP de Home Assistant no determina la màscara.
 3. Bany i dutxa són la mateixa zona? Què inclou «costelles»? On van passadís i lavabo? A quina habitació física correspon cada entitat individual?
 4. Quins membres té cadascun dels vuit grups ZHA? Què signifiquen les xifres comunicades? No les tractem com a recompte de bombetes.
 5. Quines llums afecta Adaptive Lighting? Quines automatitzacions depenen de l’indicador de mode circadià?
 6. Quins modes té habilitats l’alarma, quan exigeix codi i quins sensors inclou? Què fa exactament l’script d’alarma? El panell no l’executa.
 7. Quins modes publica l’escalfador? Exposa la temperatura actual? Què representa la lectura addicional de temperatura de procés?
 8. Quin reproductor correspon al dispositiu de sala? Quins controls publica cada reproductor?
-9. Quina URL i certificat funcionen a Safari de l’iPad? Quina versió exacta d’iOS té? S’han completat les proves físiques?
+9. Quina adreça i certificat funcionen a l’app de l’iPad? Quina versió exacta d’iOS té? S’han completat les proves físiques?
+10. Quins ventiladors són CREATE i quantes velocitats publiquen? Quines ordres té apreses cada comandament (tele, llum de sostre)? Quin és l’ID del sensor PVPC i de l’entitat del temps de Barcelona?
 
 ## Configuració d’entitats
 

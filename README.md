@@ -1,85 +1,57 @@
 # Glass Rooms
 
-## Revisió 1.1.13
+## Revisió 1.2.0
 
-**Migració des de 1.0.x:** a les opcions privades de Glass Rooms, elimina `panel_password` i configura `panel_pin` amb un PIN nou de 6 a 8 dígits. Desa les opcions i reinicia l'aplicació. La contrasenya antiga no es converteix automàticament en PIN; si falta `panel_pin`, el servidor no arrenca. L'accés al panell es fa amb el teclat numèric de la pàgina. El PIN d'alarma, si n'hi ha, continua sent independent.
+**Migració des de 1.1.x:** el panell web ja no existeix. Glass Rooms és ara un servidor d'API per a l'[app nativa per a iPad](docs/APP_IOS.md), que és l'única manera d'accedir-hi. Les opcions no canvien: l'app s'identifica amb el mateix `panel_pin` (o `app_token`). Si obries el panell amb Safari, instal·la l'app i introdueix-hi l'adreça del panell i el PIN. Les rutes `/api/login` i `/api/logout`, la cookie de sessió i els fitxers HTML, CSS, JavaScript i SVG s'han retirat; qualsevol petició a l'API sense `Authorization: Bearer` es rebutja.
 
-**Novetat 1.1.13:** a l'app per a iPad, la pàgina Estances té una tira d'**escenes** sota «Encén tot» i «Apaga tot». Un emissor d'infrarojos o de ràdio (`remote.*`, per exemple de LocalTuya) pot tenir botons propis amb la nova opció `remote_buttons`, i surten a la seva estança. A Ajustos es tria el temps sense tocar la pantalla abans que l'iPad s'apagui. Les escenes que encara no s'han activat mai (estat `unknown`) ja es poden activar.
+**Migració des de 1.0.x:** a les opcions privades de Glass Rooms, elimina `panel_password` i configura `panel_pin` amb un PIN nou de 6 a 8 dígits. Desa les opcions i reinicia l'aplicació. Si falta `panel_pin`, el servidor no arrenca. El PIN d'alarma, si n'hi ha, continua sent independent.
 
-**1.1.12:** a la pàgina de **Seguretat** de l'app per a iPad, la llista de portes i finestres és a sota de l'alarma i la càmera al costat. Ja no hi surten la sirena ni qui és a casa. El servidor demana a Home Assistant la imatge de la càmera reduïda a 1280 px d'amplada i l'espera fins a 15 s; si no arriba, l'app mostra el motiu sobre la imatge.
+**Novetats 1.2.0 (app per a iPad):**
 
-**1.1.11:** a l'app per a iPad, la portada mostra la corba de la temperatura i, a sota, la de la humitat. L'ordre de les pàgines és Estances, Clima, Seguretat i Resum, i es pot passar d'una a l'altra lliscant el dit cap a l'esquerra o cap a la dreta.
+- **Estil Jarvis:** a Ajustos es tria entre «Nit càlida» (negre i ambre) i «Jarvis» (pantalla de dades blau cian, amb graella, anells i resplendor). Tots dos tenen versió de dia i de nit, i totes les pàgines funcionen amb tots dos.
+- **Ajustos és una pàgina** sencera, amb Aparença, Pantalla i Connexió.
+- **Pantalla:** el temps sense tocar-la abans d'apagar-se es pot escriure en segons (de 5 a 86 400) o triar d'una llista. En passar el temps, l'app deixa la pantalla negra i amb la brillantor al mínim, i el bloqueig automàtic d'iOS la bloqueja després. Tocar-la només l'encén.
+- **Brillantor i escalfor de tots els llums** (els Philips Hue i qualsevol llum que publiqui brillantor o temperatura de color) amb dos controls lliscants a la pàgina d'estances, i els mateixos per a tots els llums d'una estança al seu calaix. Canvien els llums encesos; si no n'hi ha cap d'encès, s'encenen tots amb aquell valor.
+- **Pàgina Aparells:**
+  - l'**escalfador**, amb la temperatura actual, la temperatura objectiu (botons − i +), l'encesa, el mode, el mode absència i tots els atributs que publica, més els sensors del mateix aparell;
+  - els **ventiladors** (per exemple CREATE), amb interruptor i un botó per a cada velocitat, de l'1 al 6;
+  - els **comandaments** d'infrarojos o ràdio (la tele, la llum de sostre…), amb tots els botons configurats a `remote_buttons` (ara fins a 48 per comandament).
+- **Preu de la llum (PVPC):** preu actual en cèntims per kWh, gràfica de les 24 hores amb línies de màxim i mínim, mínim, màxim i mitjana del dia, i l'hora marcada com a **vall**, **normal** o **alta** (les 8 hores més barates, les 8 més cares i la resta). També els preus de l'endemà quan Red Eléctrica els publica.
+- **Temperatura de Barcelona** (o de qualsevol entitat `weather.*`) al costat de la data i a la pàgina de Clima.
+- **Clima:** períodes d'1, 3, 6, 12, 24 i 48 hores i de 7, 14 i 30 dies.
+- **Gràfiques de la portada** amb el valor actual i línies discontínues amb el màxim i el mínim del període.
+- **Alarma:** el PIN es marca amb un teclat numèric de botons grans a la mateixa pantalla, sense el teclat d'iOS.
+- S'ha retirat el canvi de pàgina lliscant el dit.
 
-**1.1.10:** l'app per a iPad té un panell de **Seguretat** a pantalla completa. Hi surten:
+Les versions anteriors es descriuen a l'[historial de l'app](docs/APP_IOS.md#historial).
 
-- l'alarma, amb els botons d'armar i desarmar;
-- la càmera, amb una imatge nova cada 2,5 s i la detecció de moviment i de persones;
-- les portes i les finestres;
-- la sirena, que només es pot aturar;
-- qui és a casa;
-- les bateries dels sensors.
+## Què és
 
-El servidor admet ara els dominis `camera`, `siren`, `person` i `device_tracker` i té la ruta `/api/camera`. La configuració és a [APP_IOS.md](docs/APP_IOS.md#panell-de-seguretat-des-de-1110).
+Un servidor local per a Home Assistant OS i una app nativa per a l'iPad mini 1 amb iOS 9.3.5, pensada per tenir-la fixa a la paret. L'app parla només amb el servidor de Glass Rooms, i el servidor parla amb Home Assistant per l'API interna de Supervisor. El token de Supervisor no surt mai del servidor.
 
-**1.1.9:**
+L'inventari és dinàmic i no incorpora IDs de cap instància. Afegeix les llums a `light_entity_ids` i altres entitats a `entity_ids`, directament a les opcions de l'aplicació a Home Assistant. `room_assignments` les situa a les habitacions i `verified_actions` declara quines accions poden aparèixer quan Home Assistant publica el servei corresponent. Totes les accions comencen bloquejades i el panell no substitueix les dades absents per valors inventats.
 
-- **Historial de clima:** cada sèrie es tanca amb la lectura actual del sensor. Així, un sensor que no ha canviat en tot el període (sovint la humitat) dibuixa una línia en lloc de quedar buit, tant al panell web com a l'app.
-- **Llums que no responen:** si un llum no arriba a l'estat demanat 10 segons després d'una ordre, l'app el bloqueja. El bloqueig dura fins que Home Assistant n'informa un estat nou o fins que passen 2 minuts.
-- **Sense actualitzacions en directe:** l'app torna a llegir l'estat cada 8 segons en lloc de cada 30.
-- **Tema:** l'app ja no té el botó del sol o la lluna; el tema es tria a Ajustos.
-
-**1.1.8:** a l'app per a iPad, la pàgina de Clima ocupa tota la pantalla. Té una gràfica gran amb eixos que es pot tocar o arrossegar per veure cada punt, una fitxa per sensor, la lectura en gran i el mínim, el màxim i la mitjana del període.
-
-**1.1.7:** l'app per a iPad ja no mostra cap avís quan envia una ordre de llums; només avisa si falla o si s'ometen llums.
-
-**1.1.6:** redisseny complet de l'[app nativa per a iPad amb iOS 9](docs/APP_IOS.md) (`ios/`), pensada per a un iPad fix a la paret. Té un rellotge gran amb temperatura, humitat i alarma i la tendència de les últimes hores. Les estances es mostren en llista, amb un interruptor de llums a cada fila, i hi ha un calaix lateral per a cada estança. Els temes són negre i ambre de nit i paper càlid de dia. El panell web i el servidor no canvien.
-
-**1.1.5:** l'app s'identifica amb el mateix PIN del panell (`panel_pin`), introduït una vegada a Ajustos; no té pantalla de bloqueig. `app_token` continua sent opcional.
-
-L’inventari és dinàmic i no incorpora IDs de cap instància. Afegeix les llums a `light_entity_ids` i altres entitats a `entity_ids`, directament a les opcions de l’aplicació a Home Assistant. `room_assignments` les situa a les habitacions i `verified_actions` declara quines accions poden aparèixer quan Home Assistant publica el servei corresponent.
-
-Un panell local en català per consultar Home Assistant i controlar les funcions que s'hagin verificat a casa. La portada mostra vuit estances il·lustrades; el resum general s'obre des de la navegació lateral. El servidor rep els canvis d’estat per WebSocket des de Home Assistant i els comunica a la pàgina sense recarregar-la; una lectura periòdica cada 30 segons serveix de recuperació si el flux cau. Els controls generals «Encén» i «Apaga» envien l’ordre explícita als llums configurats que la tenen verificada, inclosos els que no tenen estança assignada; els llums no disponibles o sense verificació s’ometen i se n’indica el nombre. El servidor comprova cada llum abans d’enviar-li l’ordre, de manera que un llum fallit no bloqueja els altres. Les ordres d'una habitació o de tota la casa s'envien al panell en una sola petició per evitar esgotar el límit amb uns quants canvis seguits. La icona de bombeta de cada targeta commuta les llums assignades quan l'ordre corresponent està verificada i torna a llegir Home Assistant per mostrar l'estat confirmat. Després d’una ordre de llum, el panell torna a consultar l’estat al cap de 2, 5, 10, 20 i 30 segons fins que Home Assistant confirma el canvi; això no accelera una integració que encara no l’hagi notificat. Si Home Assistant rebutja una ordre mentre publica un estat vàlid, l’entitat queda temporalment bloquejada fins que l’estat informat canviï. La bombeta queda farcida quan hi ha llums encesos i manté el contorn quan són apagats. Les estances amb llums encesos destaquen en to càlid, i les que tenen els llums apagats o no disponibles mostren una icona fosca. Inclou temes de dia i nit i una presentació opaca per reduir el cost dels efectes visuals. Toca la icona del sol o de la lluna al costat del rellotge per alternar els dos temes; la tria es conserva al navegador.
-
-El mòdul **Clima** mostra la temperatura i la humitat actuals per habitació a partir dels sensors `sensor.*` configurats. Reconeix els atributs `device_class: temperature` i `device_class: humidity` publicats per Home Assistant, conserva la unitat original i mostra un guió si no hi ha lectura disponible. Cada sensor té una gràfica interactiva de l'historial de Home Assistant amb períodes de 6 hores, 24 hores, 7 dies i 1 mes (els darrers 30 dies); el selector permet consultar el valor i l'hora de cada punt, mentre la xifra gran mostra la lectura instantània. L'historial requereix que Home Assistant tingui dades enregistrades per al sensor; si no n'hi ha, el panell ho indica sense inventar valors. Pots començar amb els dos sensors del menjador i afegir-ne d'altres habitacions amb la mateixa configuració, sense canviar el codi. Els sensors sense habitació assignada apareixen en una secció separada. Cal conèixer els IDs reals abans de poder mostrar valors de casa.
-
-**El codi està preparat per instal·lar-se, però la posada en servei real queda pendent.** L'usuari és fora de casa: no s'han comprovat la instància de Home Assistant ni els dispositius. L'usuari ha confirmat que la versió 1.0.2 carrega les habitacions a l'iPad mini 1 amb iOS 9.3.5; la resta de fluxos físics encara està pendent. La versió instal·lada és «l'última» segons l'usuari, sense número verificat. Totes les accions comencen bloquejades. El panell no substitueix les dades absents per valors inventats.
-
-La revisió **1.0.2** corregeix [el bloqueig de sintaxi de Safari 9.3.5](docs/SAFARI_9.md). **L’usuari ha confirmat que ara carrega les habitacions a l’iPad.** Inclou un diagnòstic independent i proves de regressió.
+El servidor rep els canvis d'estat per WebSocket des de Home Assistant i els comunica a l'app; una lectura periòdica fa de recuperació si el flux cau. Abans de cada ordre torna a llegir l'estat i els serveis de Home Assistant.
 
 ## Com començar
 
-1. Per mirar la interfície a l'ordinador, executa des de la carpeta del projecte:
-
-   ```sh
-   python3 glass_rooms/server.py --preview --port 8099
-   ```
-
-   Obre [la previsualització local](http://127.0.0.1:8099). Només escolta a l'ordinador, no es connecta a Home Assistant i no pot executar accions. Les entitats hi apareixen pendents.
-   Per provar el disseny des d'un altre dispositiu de la mateixa xarxa, executa `python3 glass_rooms/server.py --lan-preview --lan-address ADREÇA_LAN --demo-lights --port 8100` i obre `http://ADREÇA_LAN:8100`. Aquest mode mostra vuit llums ficticis, un per estança, amb estats simulats. No consulta Home Assistant i rebutja totes les ordres.
-2. Quan siguis a casa, segueix [la instal·lació a Home Assistant OS](docs/INSTALLACIO.md). Introdueix l'adreça privada de Home Assistant durant la instal·lació; el panell tindrà el seu propi port, inicialment `8099`.
+1. Quan siguis a casa, segueix [la instal·lació a Home Assistant OS](docs/INSTALLACIO.md). El servidor té el seu propi port, inicialment `8099`.
+2. Compila i instal·la [l'app per a iPad](docs/APP_IOS.md) i introdueix-hi l'adreça del panell i el PIN.
 3. Completa [la validació de dispositius i de l'iPad](docs/VALIDACIO.md) abans d'habilitar cada control.
 
-## Què inclou
-
-- Menjador, cuina, habitació, despatx, rebedor, bany, passadís i lavabo. «Menjador», repetit a la petició original, apareix una sola vegada.
-- Inventari configurable de llums i d'altres entitats, sense una llista fixa al codi.
-- Lectures reals i detecció de capacitats de llums, Adaptive Lighting, dues escenes, Alarmo, obertures i detecció, escalfador, ventiladors i reproductors. Les accions necessiten verificació explícita, a més dels atributs i serveis disponibles.
-- Servidor Python amb biblioteca estàndard i `websockets` per al flux d'esdeveniments; client JavaScript ES5, recursos locals i cap dependència del núvol durant l'ús.
-- Autenticació del panell, sessió curta al servidor, protecció de peticions i una llista tancada d'accions. El token de Supervisor no arriba al navegador.
-
-Les habitacions són una estructura de navegació, no un mapa de dispositius confirmat. Fins que es verifiqui la correspondència física, les entitats es consulten al resum general. No s'infereixen membres dels grups ZHA. El reproductor de sala no s'etiqueta com a Sonos, el script d'alarma no s'executa i no hi ha controls de temperatura de l'escalfador.
+Per provar l'app a l'ordinador sense Home Assistant: `python3 glass_rooms/server.py --preview --port 8099` obre una API de només lectura a `127.0.0.1:8099` (amb `--lan-preview --demo-lights`, accessible des de la LAN i amb vuit llums ficticis). No consulta Home Assistant i rebutja totes les ordres.
 
 ## Fitxers i guies
 
 | Element | Contingut |
 |---|---|
-| `glass_rooms/` | Aplicació local per a Home Assistant OS: configuració, imatge i servidor |
-| `glass_rooms/www/` | HTML, CSS, JavaScript i il·lustracions, sense secrets |
+| `glass_rooms/` | Aplicació local per a Home Assistant OS: configuració, imatge i servidor d'API |
+| `ios/` · [App per a iPad](docs/APP_IOS.md) | Client natiu UIKit per a iOS 9: compilació sense Xcode, sideload i configuració |
 | [Instal·lació](docs/INSTALLACIO.md) | Còpia de seguretat, accés local, autenticació i connexió |
 | [Validació](docs/VALIDACIO.md) | Proves per entitat, activació de controls i proves sobre l'iPad real |
 | [Inventari i preguntes pendents](docs/INVENTARI.md) | Abast exacte i decisions que falten |
-| [Arquitectura](docs/ARQUITECTURA.md) | Flux de dades, permisos i límits de compatibilitat |
+| [Arquitectura](docs/ARQUITECTURA.md) | Flux de dades, permisos i límits |
 | [Manteniment](docs/MANTENIMENT.md) | Errors habituals, actualització, reversió i retirada |
-| `ios/` · [App per a iPad](docs/APP_IOS.md) | Client natiu UIKit per a iOS 9: compilació sense Xcode, sideload i configuració |
+| [Proves locals](docs/PROVES_LOCALS.md) | Què s'ha comprovat a l'ordinador i què no |
 
-La sintaxi ES5 i les comprovacions en un navegador actual ajuden a preparar la compatibilitat, però **no demostren que Safari d'iOS 9 funcioni al dispositiu**. La connexió HTTPS, els certificats, i el rendiment s'han de comprovar a l'iPad físic. El registre de validació diferencia aquestes proves de les comprovacions locals.
+Les habitacions són una estructura de navegació, no un mapa de dispositius confirmat. No s'infereixen membres dels grups ZHA, el reproductor de sala no s'etiqueta com a Sonos i el script d'alarma no s'executa.

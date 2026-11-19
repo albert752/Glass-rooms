@@ -20,6 +20,8 @@
   return YES;
 }
 
+// The brightness lowered for the black screen is restored whenever the app stops being in front.
+- (void)applicationWillResignActive:(UIApplication *)application { [GRScreenLock wake]; }
 - (void)applicationDidEnterBackground:(UIApplication *)application { [self.panel appDidEnterBackground]; }
 - (void)applicationWillEnterForeground:(UIApplication *)application { [GRScreenLock restart]; [self.panel appWillEnterForeground]; }
 

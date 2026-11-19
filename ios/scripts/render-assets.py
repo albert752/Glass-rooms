@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Rasterise the web panel's icons and the app icon into PNGs for the iOS 9 app (UIKit cannot draw SVG).
+"""Rasterise the icons (SVG paths in ios/scripts/icons.json, inherited from the former web panel) and the app
+icon into PNGs for the iOS 9 app (UIKit cannot draw SVG).
 
 Uses macOS `sips`. The PNGs are committed, so building the app does not need this script.
-Run again after changing the ICONS table in glass_rooms/www/app.js.
+Run again after changing ios/scripts/icons.json.
 """
 
-import re
+import json
+
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-WWW = ROOT / "glass_rooms" / "www"
 OUT = ROOT / "ios" / "GlassRooms" / "Resources"
 
 
@@ -24,9 +25,7 @@ def render(svg_text, target, work):
 
 
 def icons():
-    source = (WWW / "app.js").read_text(encoding="utf-8")
-    table = source[source.index("var ICONS = {"):source.index("};", source.index("var ICONS = {"))]
-    return dict(re.findall(r"(\w+):'([^']*)'", table))
+    return json.loads((ROOT / "ios" / "scripts" / "icons.json").read_text(encoding="utf-8"))
 
 
 def icon_svg(name, paths, size):

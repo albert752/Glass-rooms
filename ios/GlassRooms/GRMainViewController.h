@@ -1,4 +1,4 @@
-// Glass Rooms for iOS 9: the whole panel in one screen, like the web client.
+// Glass Rooms for iOS 9: the whole panel in one screen.
 #import <UIKit/UIKit.h>
 #import "GRPanelModel.h"
 
@@ -13,6 +13,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)openSettings;
 - (void)closeModal;
 - (void)setThemeChoice:(NSString *)theme;
+- (void)setStyleChoice:(NSString *)style;
 - (void)appDidEnterBackground;
 - (void)appWillEnterForeground;
 @end

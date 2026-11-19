@@ -1,4 +1,4 @@
-// Glass Rooms for iOS 9: presentation rules shared with glass_rooms/www/app.js.
+// Glass Rooms for iOS 9: presentation rules (states, counts, climate, weather, fan speeds, PVPC levels).
 #import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
@@ -37,6 +37,21 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSString *)dateText:(NSDate *)date;
 + (BOOL)isNightForTheme:(NSString *)theme date:(NSDate *)date;
 + (NSString *)lastUpdateText:(nullable NSString *)fetchedAt connected:(BOOL)connected demo:(BOOL)demo;
+// First available weather.* entity (outdoor temperature, e.g. Barcelona), or nil.
++ (nullable NSDictionary *)weather:(NSArray *)entities connected:(BOOL)connected;
++ (NSString *)weatherCondition:(nullable NSString *)state;
+// "Barcelona 14,2° · ennuvolat", or nil without a reading.
++ (nullable NSString *)weatherLine:(NSArray *)entities connected:(BOOL)connected;
+// Fan speeds the way Home Assistant converts them: speed n of N is floor(n * 100 / N) %, a percentage is speed ceil(p * N / 100).
++ (NSInteger)fanSpeedForPercentage:(double)percentage speeds:(NSInteger)speeds;
++ (NSInteger)percentageForFanSpeed:(NSInteger)speed speeds:(NSInteger)speeds;
+// PVPC electricity price sensor: hourly prices (24 NSNumber or NSNull) for today (or tomorrow).
++ (nullable NSDictionary *)pvpcSensor:(NSArray *)entities;
++ (NSArray *)pvpcPrices:(NSDictionary *)sensor tomorrow:(BOOL)tomorrow;
+// "low" (vall), "normal" or "high" (alta): the cheapest third of the day's hours, the middle third, the dearest third.
++ (NSString *)priceLevel:(double)price prices:(NSArray *)prices;
+// Price in cents of euro per kWh with one decimal: 0.1234 €/kWh -> "12,3".
++ (NSString *)centsText:(double)euros;
 @end
 
 NS_ASSUME_NONNULL_END

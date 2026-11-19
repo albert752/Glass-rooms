@@ -26,6 +26,7 @@ CATEGORY_BY_DOMAIN = {
     "scene": "scenes",
     "switch": "switches",
     "input_boolean": "switches",
+    "weather": "weather",
 }
 
 

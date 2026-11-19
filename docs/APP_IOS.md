@@ -1,48 +1,85 @@
 # App nativa per a iPad (iOS 9)
 
-`ios/` conté **Glass Rooms per a iPad**, una aplicació UIKit escrita en Objective-C per a l'iPad mini 1 amb iOS 9.3.5. No és un navegador incrustat: rellotge, llistes, gràfiques, calaix lateral, controls i preferències són vistes natives. Les icones són les del panell web, convertides a PNG.
+`ios/` conté **Glass Rooms per a iPad**, una aplicació UIKit escrita en Objective-C per a l'iPad mini 1 amb iOS 9.3.5. No és un navegador incrustat: rellotge, llistes, gràfiques, calaix lateral, controls i preferències són vistes natives.
 
-## Disseny «Nit càlida» (1.1.6)
+Des de 1.2.0 l'app és l'**única** manera d'accedir a Glass Rooms: el servidor ja no té panell web.
+
+## Disseny
 
 Està pensat per a un iPad fix a la paret i llegit a distància.
 
-- **Columna del rellotge:**
-  - l'hora en gran i la data;
+- **Estils (des de 1.2.0):** a Ajustos → Aparença es tria l'estil i el tema.
+  - *Nit càlida*: de nit, negre pur amb text ambre; de dia, paper càlid amb ambre torrat.
+  - *Jarvis*: una pantalla de dades a l'estil d'Iron Man. De nit, blau gairebé negre amb cian brillant, una graella de fons, anells al voltant del rellotge, cantonades marcades a les targetes i resplendor als elements actius; de dia, vidre clar amb cian fosc. Tipografia Avenir Next Condensed.
+  - El tema (automàtic, dia o nit) s'aplica a tots dos estils; en automàtic és de dia de 7 a 20 h.
+- **Columna del rellotge** (pàgines Estances i Resum):
+  - l'hora en gran i la data, seguida de la temperatura exterior (per exemple «Barcelona 16,4° · mig ennuvolat») si hi ha una entitat `weather.*`;
   - la temperatura i la humitat interiors, amb la mitjana dels sensors disponibles;
   - l'estat de l'alarma o, si no n'hi ha cap, els llums encesos;
-  - la corba de temperatura i, a sota, la d'humitat (des de 1.1.11), del primer sensor de cada tipus amb historial, amb el període triat a Clima (24 h per defecte).
-- **Navegació inferior:** Estances, Clima, Seguretat, Resum i Ajustos. Des de 1.1.11, lliscar el dit cap a l'esquerra o cap a la dreta passa a la pàgina següent o a l'anterior, en aquest ordre. No es llisca de pàgina si el dit comença sobre un control lliscant, un interruptor, la gràfica de clima o una tira de fitxes, ni amb un calaix obert. El tema (automàtic, dia o nit) només es tria a Ajustos (des de 1.1.9).
-- **Estances:** una fila per estança, amb un punt ambre si té llums encesos, la temperatura i un interruptor de llums. Tocar el nom obre el calaix de l'estança. Sota la llista hi ha «Encén tot» i «Apaga tot» i, des de 1.1.13, una tira amb les escenes (`scene.*` d'`entity_ids` amb `:turn_on` a `verified_actions`).
-- **Avisos:** les ordres de llums no mostren cap missatge en enviar-se ni quan funcionen; l'interruptor i l'estat actualitzat ja ho indiquen. Només apareix un avís si l'ordre falla o si s'ometen llums (des de 1.1.7).
-- **Clima (des de 1.1.8):** ocupa tota la pantalla i la columna del rellotge s'amaga. A dalt hi ha el període (6 h, 24 h, 7 dies, 1 mes) i una fitxa per sensor amb l'estança i la lectura actual. Sota hi ha el valor del punt triat en gran, amb el mínim, el màxim i la mitjana del període. La gràfica té eixos de valor i d'hora, i tocar-la o arrossegar-hi el dit mostra cada registre.
-- **Llums que no responen (des de 1.1.9):**
-  - Un llum que Home Assistant marca com a no disponible queda bloquejat a la següent actualització en directe, normalment en un o dos segons.
-  - Home Assistant pot trigar minuts a adonar-se que un llum s'ha desconnectat, i aquest retard depèn de la integració. Mentrestant, si el llum no arriba a l'estat demanat 10 segons després d'una ordre, l'app el marca com a «No respon a les ordres» i n'atura els controls.
-  - El bloqueig s'aixeca quan Home Assistant informa un estat nou, o al cap de 2 minuts.
-  - Si es perden les actualitzacions en directe, l'estat es torna a llegir cada 8 segons.
-- **Bloqueig de la pantalla (des de 1.1.13):** a Ajustos es tria «Com iOS», 5, 15 o 30 minuts, 1 hora o «Mai». Una app no pot bloquejar l'iPad: manté la pantalla encesa mentre s'ha tocat dins del temps triat i després deixa fer al bloqueig automàtic d'iOS, que s'hi suma. Posa'l a 2 minuts a Configuració → Pantalla i brillantor. Qui tenia activat «Mantén la pantalla encesa» passa a «Mai».
-- **Emissors d'infrarojos i ràdio (des de 1.1.13):** un `remote.*` assignat a una estança mostra al calaix un botó per a cada línia de `remote_buttons` (vegeu [la instal·lació](INSTALLACIO.md)).
-- **Calaix lateral:** surt per la dreta. Cada dispositiu amb ordres d'encendre i apagar té un interruptor. La brillantor, la velocitat i el volum s'envien en deixar anar el control lliscant, sense botó «Aplica».
-- **Temes:** de nit, negre pur amb text ambre; de dia, paper càlid amb ambre torrat. El mode automàtic canvia a les 7 i a les 20 h.
-- **Orientació:** en horitzontal, el rellotge queda a l'esquerra i el contingut a la dreta. En vertical, el rellotge va a dalt i la llista a sota.
+  - la corba de temperatura i la d'humitat del període triat a Clima, amb el valor actual al final i línies discontínues amb el màxim i el mínim del període (des de 1.2.0).
+- **Navegació inferior:** Estances, Clima, Aparells, Preu de la llum, Seguretat, Resum i Ajustos. Des de 1.2.0 no es canvia de pàgina lliscant el dit.
+- **Estances:** una fila per estança, amb un punt si té llums encesos, la temperatura i un interruptor de llums. Tocar el nom obre el calaix de l'estança. Sota la llista hi ha «Encén tot» i «Apaga tot», la secció **Tots els llums** i la tira d'escenes.
+- **Tots els llums (des de 1.2.0):** un control lliscant de brillantor i un d'escalfor (de càlida a freda, en kelvin) per a tots els llums que en publiquen, com els Philips Hue. Canvien els llums encesos; si no n'hi ha cap d'encès, s'encenen tots amb aquell valor. Cada llum rep la temperatura de color més propera que admet. El valor s'envia en deixar anar el dit, en una sola petició. El calaix d'una estança amb més d'un llum té els mateixos controls per als llums de l'estança.
+- **Clima:** ocupa tota la pantalla. A dalt, la temperatura exterior i els períodes (1, 3, 6, 12, 24 i 48 h; 7, 14 i 30 dies des de 1.2.0); a sota, una fitxa per sensor, la lectura en gran amb el mínim, el màxim i la mitjana, i la gràfica, que es pot tocar o arrossegar. Home Assistant guarda 10 dies d'historial per defecte; per als períodes més llargs cal augmentar `purge_keep_days` del recorder.
+- **Aparells (des de 1.2.0):**
+  - **Escalfador** (`water_heater.*`): temperatura actual en gran, temperatura objectiu, estat i interruptor d'encesa. La temperatura objectiu es canvia amb − i + i s'envia 1,5 s després de l'últim toc. Els modes es trien amb un toc. Mode absència amb interruptor. A sota, **tota la informació** que publica l'escalfador (temperatures, límits, modes i qualsevol altre atribut simple, com potència o dutxes) i els sensors del mateix aparell: les entitats de `entity_ids` amb el mateix nom de base (per exemple `sensor.termo_energia` per a `water_heater.termo`).
+  - **Ventiladors** (`fan.*`): interruptor i un botó per a cada velocitat. Si el ventilador publica `percentage_step` (16,67 % per a 6 velocitats, com els CREATE), l'app en dedueix el nombre; si no, es configura amb `fan_speeds`. La velocitat *n* de *N* s'envia com a `floor(n × 100 / N)` %, la mateixa conversió que fa Home Assistant.
+  - **Comandaments** (`remote.*`): una targeta per comandament amb tots els botons de `remote_buttons`.
+- **Preu de la llum (des de 1.2.0):** a partir del sensor de la integració *Spain electricity hourly pricing (PVPC)*.
+  - El preu actual en cèntims d'euro per kWh i si l'hora és **vall**, **normal** o **alta**: vall són les 8 hores més barates del dia, alta les 8 més cares i normal la resta.
+  - El mínim i el màxim del dia (amb l'hora) i la mitjana.
+  - Una gràfica de barres de les 24 hores, de color segons el nivell, amb l'hora actual destacada i línies discontínues al màxim i al mínim. Tocar o arrossegar sobre la gràfica mostra el preu de cada hora.
+  - «Avui» i «Demà» quan Home Assistant ja té els preus de l'endemà (normalment a partir de les 20.30).
+  - El període tarifari (punta P1, pla P2, vall P3), el següent, la propera hora més barata i les tres hores més barates que queden avui.
+- **Avisos:** les ordres no mostren cap missatge en enviar-se ni quan funcionen; només si fallen o s'ometen llums.
+- **Llums que no responen (des de 1.1.9):** si un llum no arriba a l'estat demanat 10 segons després d'una ordre, l'app el marca com a «No respon a les ordres» i n'atura els controls fins que Home Assistant informa un estat nou o passen 2 minuts. Si es perden les actualitzacions en directe, l'estat es torna a llegir cada 8 segons.
+- **Ajustos (pàgina des de 1.2.0):** Aparença (estil i tema), Pantalla i Connexió (adreça, PIN, comprovació i informe de verificació).
+- **Pantalla (des de 1.2.0):** el temps sense tocar-la abans d'apagar-se es tria entre «Com iOS», 15 s, 30 s, 1 min, 5 min, 15 min, 1 h i «Mai», o s'escriu en segons (de 5 a 86 400). Una app no pot bloquejar l'iPad: quan passa el temps, l'app posa la pantalla negra i amb la brillantor al mínim, i deixa fer al bloqueig automàtic d'iOS (Configuració → Pantalla i brillantor), que la bloqueja després. El primer toc sobre la pantalla negra només l'encén i restaura la brillantor; no arriba a cap botó. L'opció «Apaga-la del tot» es pot desactivar; aleshores, en passar el temps, només es deixa fer a iOS.
+- **Alarma (teclat des de 1.2.0):** quan una ordre necessita el PIN de l'alarma, el calaix mostra un teclat numèric de botons grans (1–9, 0, esborra l'últim dígit i esborra-ho tot) i uns punts amb els dígits escrits. No s'obre el teclat d'iOS.
+- **Calaix lateral:** surt per la dreta. Cada dispositiu amb ordres d'encendre i apagar té un interruptor. La brillantor, la temperatura de color i el volum s'envien en deixar anar el control lliscant.
+- **Orientació:** en horitzontal, el rellotge queda a l'esquerra i el contingut a la dreta. En vertical, el rellotge va a dalt i la llista a sota. Les pàgines Clima, Aparells, Preu de la llum, Seguretat i Ajustos ocupen tota la pantalla.
 
-Les il·lustracions de les estances i l'opció «contrast suau» de les versions anteriors s'han retirat de l'app. El panell web les conserva.
-
-L'app parla només amb el servidor de Glass Rooms (port `8099` per defecte), mai directament amb Home Assistant. El servidor aplica les mateixes regles que amb el navegador: xarxes i hosts permesos, nova lectura abans de cada ordre, `verified_actions` i límits de peticions.
+L'app parla només amb el servidor de Glass Rooms (port `8099` per defecte), mai directament amb Home Assistant. El servidor aplica xarxes i hosts permesos, nova lectura abans de cada ordre, `verified_actions` i límits de peticions.
 
 **Estat:** compilada i enllaçada contra l'SDK d'iOS 9.3 (armv7 i arm64), provada a l'ordinador i instal·lada a l'iPad mini 1 (jailbreak i AppSync Unified). La connexió amb el Home Assistant real la confirma l'usuari. Vegeu [què s'ha comprovat](#què-sha-comprovat).
 
-## Què fa igual que el panell web
+## Configuració de les novetats de 1.2.0
 
-- Les vuit estances, amb els llums encesos o apagats, els llums sense connexió i la commutació dels llums de cada estança.
-- «Encén» i «Apaga» per a tots els llums amb l'ordre verificada, en una sola petició `/api/lights`.
-- Resum per categories, «Veure tots els dispositius», calaixos de Llums, Alarma i Ambient.
-- Clima amb lectura actual i historial de 6 h, 24 h, 7 dies i 1 mes; tocar la gràfica mostra l'hora i el valor de cada punt.
-- Controls de botó, interval (brillantor, temperatura de color, velocitat, volum) i mode, amb els motius de bloqueig del servidor.
-- Alarma amb confirmació i PIN d'alarma quan la política ho exigeix. El PIN s'esborra del camp abans d'enviar-lo.
-- Temes de dia i nit (automàtic de 7 a 20 h), triats a Ajustos.
-- Actualitzacions en directe (`/api/updates`), lectura de seguretat cada 30 segons i relectures als 2, 5, 10, 20 i 30 segons després d'una ordre de llum. L'historial de clima es demana com a màxim cada 2 minuts, perquè la columna del rellotge en mostra la tendència a totes les vistes.
-- Informe de verificació (`/api/audit`).
+Opcions de Glass Rooms (en YAML). Totes les entitats han de ser a `light_entity_ids` o `entity_ids`, i cada acció a `verified_actions` després de provar-la:
+
+```yaml
+entity_ids:
+  - water_heater.termo
+  - sensor.termo_energia          # sensors del mateix aparell, opcionals
+  - fan.ventilador_menjador
+  - remote.tele
+  - remote.llum_sostre
+  - sensor.esios_pvpc             # integració «Spain electricity hourly pricing (PVPC)»
+  - weather.barcelona             # Met.no o AEMET; el nom de l'entitat és el que es mostra
+fan_speeds:
+  - fan.ventilador_menjador:6     # només si el ventilador no publica percentage_step
+remote_buttons:
+  - remote.tele:tele:power:Engega
+  - remote.tele:tele:volume_up:Volum +
+  - remote.llum_sostre:sostre:on:Encén
+verified_actions:
+  - light.sostre_menjador:brightness          # per a cada llum Hue
+  - light.sostre_menjador:color_temp_kelvin
+  - water_heater.termo:turn_on
+  - water_heater.termo:turn_off
+  - water_heater.termo:set_temperature
+  - water_heater.termo:set_operation_mode
+  - water_heater.termo:set_away_mode          # activa i desactiva el mode absència
+  - fan.ventilador_menjador:turn_on
+  - fan.ventilador_menjador:turn_off
+  - fan.ventilador_menjador:set_percentage
+  - remote.tele:send_command
+  - remote.llum_sostre:send_command
+```
+
+- L'escalfador només mostra els controls que publica (`supported_features`: 1 temperatura objectiu, 2 modes, 4 mode absència, 8 encesa) i amb els límits `min_temp` i `max_temp`.
+- Els comandaments no poden descobrir les ordres apreses: cal escriure-les a `remote_buttons` amb el dispositiu i l'ordre que vas fer servir en aprendre-les. Fins a 48 botons per comandament.
+- El PVPC i el temps són només de lectura.
 
 ## Panell de seguretat (des de 1.1.10)
 
@@ -97,27 +134,18 @@ alarm_disarm_code: required # o none, segons Alarmo
 
 Conserva els llums i els sensors que ja tenies a `entity_ids`. Les ordres de l'alarma i de la sirena només s'activen després de provar-les a casa i afegir-les a `verified_actions`.
 
-## Diferències deliberades
+## Accés i seguretat
 
-| Web | App |
-|---|---|
-| Teclat numèric amb `panel_pin` i sessió de 12 hores | **Sense bloqueig amb codi.** El PIN del panell (`panel_pin`) s'introdueix una sola vegada a Ajustos, queda al clauer de l'iPad i l'app l'envia com a credencial. |
-| Cookie, CSRF i comprovació d'origen | Capçalera `Authorization: Bearer`; no hi ha credencial ambiental que un altre web pugui reutilitzar. |
-| Seguretat al calaix de categoria | Pàgina completa amb alarma, càmera, obertures, sirena, persones i bateries. |
-| `<select>` per als modes | Full d'opcions natiu. |
-| Botó «Aplica» als controls lliscants | El valor s'envia en deixar anar el control. |
-| Targetes il·lustrades | Llista d'estances amb interruptor; sense il·lustracions. |
-| Tancar la sessió | No n'hi ha: per revocar l'accés, canvia `panel_pin`. |
-| — | Temps de bloqueig de la pantalla (des de 1.1.13; abans, «Mantén la pantalla encesa»). |
-| — | Fixació del certificat HTTPS per empremta SHA-256 si iOS no el reconeix. |
+- **Credencial:** el PIN del panell (`panel_pin`) s'introdueix una sola vegada a Ajustos, queda al clauer de l'iPad i l'app l'envia com a `Authorization: Bearer` amb cada petició. No hi ha cookie ni sessió: per revocar l'accés, canvia `panel_pin`.
+- **Certificat:** si iOS no reconeix el certificat HTTPS, l'app permet fixar-lo per empremta SHA-256.
 
 ## 1. Prepara el servidor
 
-1. Actualitza Glass Rooms a **1.1.5** o posterior. Des d'aquesta versió l'app accepta el mateix PIN que el panell web (`panel_pin`); no cal cap opció nova.
+1. Actualitza Glass Rooms a **1.2.0** o posterior perquè coincideixi amb l'app. L'app s'identifica amb el PIN del panell (`panel_pin`).
 2. `app_token` (de 1.1.4) continua sent opcional: si el configures, l'app també accepta aquell token llarg en lloc del PIN.
 3. Comprova que `allowed_hosts` conté l'adreça exacta que escriuràs a l'app (per exemple `192.168.1.10:8099`) i que l'IP de l'iPad és dins d'`allowed_networks`.
 
-L'app envia el PIN amb cada petició. Els intents erronis comparteixen el límit del teclat web (5 per minut i IP). Sobre HTTP, el PIN viatja sense xifrar dins la LAN, igual que al panell web: si pots, configura HTTPS.
+L'app envia el PIN amb cada petició. Els intents erronis tenen un límit de 5 per minut i IP. Sobre HTTP, el PIN viatja sense xifrar dins la LAN: si pots, configura HTTPS.
 
 ## 2. Compila l'IPA (Mac sense Xcode)
 
@@ -138,7 +166,7 @@ Apple només permet instal·lar apps signades amb un certificat vàlid per al di
 - **Eina de sideload amb un Apple ID** (per exemple Sideloadly): torna a signar l'IPA per al teu iPad. Comprova abans que la versió de l'eina encara admet iOS 9. Amb un Apple ID gratuït la signatura **caduca al cap de 7 dies** i cal reinstal·lar; amb un compte de desenvolupador de pagament, un any.
 - **iPad amb jailbreak i AppSync Unified** (el camí que ha funcionat a l'iPad mini 1 amb iOS 9.3.5, on la verificació en línia d'Apple falla): instal·la AppSync Unified des de Cydia (`https://cydia.akemi.ai/`) i, amb l'iPad connectat per USB, `ideviceinstaller install ios/build/GlassRooms.ipa` (`brew install ideviceinstaller`). Després de reiniciar l'iPad cal reactivar el jailbreak abans d'obrir l'app.
 
-Les preferències i el PIN es conserven mentre no esborris l'app.
+Les preferències i el PIN es conserven mentre no esborris l'app. Per actualitzar-la, torna a instal·lar l'IPA nova de la mateixa manera.
 
 ## 4. Primera obertura
 
@@ -158,12 +186,13 @@ Si iOS 9 confia en el certificat (cadena vàlida i nom correcte), no cal fer res
 
 | Fitxer | Paper |
 |---|---|
-| `ios/GlassRooms/GRLogic.m` | Regles de presentació portades d'`app.js` (estats, recomptes, clima) |
+| `ios/GlassRooms/GRLogic.m` | Regles de presentació (estats, recomptes, clima, temps, velocitats de ventilador, nivells del PVPC) |
 | `ios/GlassRooms/GRPanelModel.m` | Estat, sondeig, actualitzacions en directe, ordres i historial |
 | `ios/GlassRooms/GRAPIClient.m` | `NSURLSession`, credencial Bearer, errors en català i fixació de certificat |
 | `ios/GlassRooms/GRMainViewController.m` | Tota la interfície, amb disposició manual per a 1024×768 i 768×1024 |
-| `ios/GlassRooms/GRTheme.m` | Paletes «Nit càlida» de dia i de nit |
-| `ios/GlassRooms/Resources/` | Icones, icona de l'app i pantalles d'inici generades per `ios/scripts/render-assets.py` |
+| `ios/GlassRooms/GRTheme.m` | Estils «Nit càlida» i «Jarvis», cadascun de dia i de nit, i les tipografies |
+| `ios/GlassRooms/GRScreenLock.m` | Apagat de la pantalla després dels segons triats |
+| `ios/GlassRooms/Resources/` | Icones (de `ios/scripts/icons.json`), icona de l'app i pantalles d'inici generades per `ios/scripts/render-assets.py` |
 | `ios/scripts/test.sh` | Proves de la lògica i del client contra el servidor real amb un Home Assistant simulat |
 | `ios/scripts/preview-mac.sh` | Només desenvolupament: la mateixa interfície com a app Mac Catalyst per veure-la a l'ordinador |
 
@@ -171,9 +200,36 @@ Si iOS 9 confia en el certificat (cadena vàlida i nom correcte), no cal fer res
 
 ## Què s'ha comprovat
 
+- **1.2.0:** compilació amb `-Werror` contra `iPhoneOS9.3.sdk`; proves de la lògica (velocitats de ventilador, nivells i preus del PVPC, línia del temps) i del client contra el servidor nou, només API; captures de la compilació Mac Catalyst a 1024×768 en els dos estils, de dia i de nit, contra el servidor real amb un Home Assistant simulat (llums Hue, ventiladors de 6 velocitats, escalfador, dos comandaments, PVPC, temps de Barcelona i alarma): estances, clima, aparells, preu de la llum, ajustos, calaix d'estança i teclat de l'alarma. No s'ha comprovat a l'iPad l'apagat de la pantalla (brillantor i primer toc), la tipografia Avenir Next Condensed d'iOS 9 ni el rendiment de les ombres de l'estil Jarvis a l'A5.
 - Compilació amb `-Werror` i enllaç contra `iPhoneOS9.3.sdk` per a armv7 i arm64; el binari porta `LC_VERSION_MIN_IPHONEOS 9.0` i només enllaça frameworks del sistema.
 - Proves del client nadiu contra `glass_rooms/server.py` amb un Home Assistant simulat: PIN i token acceptats, credencial incorrecta rebutjada, estat, ordre de llums per lots, brillantor, error de validació del servidor, historial i informe sense el token.
 - Captures del disseny 1.1.6 en una compilació Mac Catalyst a 1024×768 i 768×1024, de dia i de nit, contra el servidor real amb un Home Assistant simulat (llums, sensors i alarma). Inclouen estances, resum, clima, calaix d'estança, llums i ajustos, i un interruptor d'estança que arriba al servidor i torna l'estança encesa.
 - Instal·lació a l'iPad mini 1 amb iOS 9.3.5 (jailbreak i AppSync Unified) amb `ideviceinstaller`.
 
 **No comprovat:** l'aspecte exacte a iOS 9 (al Mac Catalyst, els interruptors no prenen el color del botó), rendiment de l'A5, TLS d'iOS 9 amb el teu certificat, clauer amb la signatura de l'eina de sideload, rotació i teclat al dispositiu. El Mac Catalyst usa UIKit modern i no reprodueix iOS 9.
+
+## Historial
+
+**1.1.13:** a l'app per a iPad, la pàgina Estances té una tira d'**escenes** sota «Encén tot» i «Apaga tot». Un emissor d'infrarojos o de ràdio (`remote.*`, per exemple de LocalTuya) pot tenir botons propis amb la nova opció `remote_buttons`, i surten a la seva estança. A Ajustos es tria el temps sense tocar la pantalla abans que l'iPad s'apagui. Les escenes que encara no s'han activat mai (estat `unknown`) ja es poden activar.
+
+**1.1.12:** a la pàgina de **Seguretat** de l'app per a iPad, la llista de portes i finestres és a sota de l'alarma i la càmera al costat. Ja no hi surten la sirena ni qui és a casa. El servidor demana a Home Assistant la imatge de la càmera reduïda a 1280 px d'amplada i l'espera fins a 15 s; si no arriba, l'app mostra el motiu sobre la imatge.
+
+**1.1.11:** a l'app per a iPad, la portada mostra la corba de la temperatura i, a sota, la de la humitat. L'ordre de les pàgines és Estances, Clima, Seguretat i Resum, i es pot passar d'una a l'altra lliscant el dit cap a l'esquerra o cap a la dreta.
+
+**1.1.10:** l'app per a iPad té un panell de **Seguretat** a pantalla completa. Hi surten:
+
+- l'alarma, amb els botons d'armar i desarmar;
+- la càmera, amb una imatge nova cada 2,5 s i la detecció de moviment i de persones;
+- les portes i les finestres;
+- la sirena, que només es pot aturar;
+- qui és a casa;
+- les bateries dels sensors.
+
+El servidor admet ara els dominis `camera`, `siren`, `person` i `device_tracker` i té la ruta `/api/camera`. La configuració és a [APP_IOS.md](#panell-de-seguretat-des-de-1110).
+
+**1.1.9:**
+
+- **Historial de clima:** cada sèrie es tanca amb la lectura actual del sensor. Així, un sensor que no ha canviat en tot el període (sovint la humitat) dibuixa una línia en lloc de quedar buit, tant al panell web com a l'app.
+- **Llums que no responen:** si un llum no arriba a l'estat demanat 10 segons després d'una ordre, l'app el bloqueja. El bloqueig dura fins que Home Assistant n'informa un estat nou o fins que passen 2 minuts.
+- **Sense actualitzacions en directe:** l'app torna a llegir l'estat cada 8 segons en lloc de cada 30.
+- **Tema:** l'app ja no té el botó del sol o la lluna; el tema es tria a Ajustos.

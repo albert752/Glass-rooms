@@ -28,7 +28,7 @@ static NSString *const GRVersion = @GR_VERSION;
     _icon = GRIconView(icon, NO, [GRTheme current].muted);
     _icon.userInteractionEnabled = NO;
     [self addSubview:_icon];
-    self.layer.cornerRadius = 18; self.layer.borderWidth = 1;
+    self.layer.borderWidth = 1;
     self.isAccessibilityElement = YES; self.accessibilityLabel = accessibility; self.accessibilityTraits = UIAccessibilityTraitButton;
   }
   return self;
@@ -37,6 +37,9 @@ static NSString *const GRVersion = @GR_VERSION;
   GRTheme *t = [GRTheme current];
   self.icon.tintColor = self.active ? t.accent : t.muted;
   self.layer.borderColor = (self.active ? t.accent : t.edge).CGColor;
+  self.layer.cornerRadius = GRRadius(18);
+  GRGlow(self.layer, t.accent, 10);
+  if(!self.active) { self.layer.shadowOpacity = 0; }
   self.accessibilityTraits = UIAccessibilityTraitButton | (self.active ? UIAccessibilityTraitSelected : 0);
 }
 - (void)setActive:(BOOL)active { _active = active; [self applyTheme]; }
@@ -49,6 +52,151 @@ static NSString *const GRVersion = @GR_VERSION;
 @end
 @implementation GRRowControl
 - (void)setHighlighted:(BOOL)highlighted { [super setHighlighted:highlighted]; self.backgroundColor = highlighted ? [GRTheme current].line : [UIColor clearColor]; }
+@end
+
+// Jarvis background: a faint grid and, behind the clock, rings with tick marks like a heads-up display.
+@interface GRHUDView : UIView
+@property (nonatomic) CGPoint ringCenter;
+@property (nonatomic) BOOL showRings;
+@end
+
+@implementation GRHUDView
+- (instancetype)initWithFrame:(CGRect)frame {
+  if((self = [super initWithFrame:frame])) { self.opaque = NO; self.backgroundColor = [UIColor clearColor]; self.userInteractionEnabled = NO; self.contentMode = UIViewContentModeRedraw; }
+  return self;
+}
+- (void)drawRect:(CGRect)rect {
+  GRTheme *t = [GRTheme current];
+  if(!t.jarvis) { return; }
+  CGSize size = self.bounds.size;
+  UIBezierPath *grid = [UIBezierPath bezierPath];
+  for(CGFloat x = 0; x <= size.width; x += 32) { [grid moveToPoint:CGPointMake(x + .5, 0)]; [grid addLineToPoint:CGPointMake(x + .5, size.height)]; }
+  for(CGFloat y = 0; y <= size.height; y += 32) { [grid moveToPoint:CGPointMake(0, y + .5)]; [grid addLineToPoint:CGPointMake(size.width, y + .5)]; }
+  grid.lineWidth = 1; [t.grid setStroke]; [grid stroke];
+  if(!self.showRings) { return; }
+  CGPoint c = self.ringCenter;
+  UIColor *ring = [t.accent colorWithAlphaComponent:t.night ? .22 : .18];
+  [ring setStroke];
+  for(NSArray *arc in @[@[@150, @(-0.55), @(2.4), @1.5], @[@172, @(2.9), @(5.3), @1], @[@196, @(-1.2), @(1.0), @3]]) {
+    UIBezierPath *path = [UIBezierPath bezierPathWithArcCenter:c radius:[arc[0] doubleValue] startAngle:[arc[1] doubleValue] endAngle:[arc[2] doubleValue] clockwise:YES];
+    path.lineWidth = [arc[3] doubleValue]; [path stroke];
+  }
+  UIBezierPath *ticks = [UIBezierPath bezierPath];
+  for(NSInteger i = 0; i < 72; i++) {
+    double angle = i * M_PI * 2 / 72;
+    CGFloat inner = i % 6 ? 208 : 202;
+    [ticks moveToPoint:CGPointMake(c.x + cos(angle) * inner, c.y + sin(angle) * inner)];
+    [ticks addLineToPoint:CGPointMake(c.x + cos(angle) * 214, c.y + sin(angle) * 214)];
+  }
+  ticks.lineWidth = 1; [[t.accent colorWithAlphaComponent:t.night ? .16 : .14] setStroke]; [ticks stroke];
+}
+@end
+
+// Bordered card; in the Jarvis style it also gets bracket corners in the accent colour.
+@interface GRCardView : GRFlowView
+@end
+
+@implementation GRCardView {
+  CAShapeLayer *_brackets;
+}
+- (void)layoutSubviews {
+  [super layoutSubviews];
+  GRTheme *t = [GRTheme current];
+  if(!t.jarvis) { [_brackets removeFromSuperlayer]; _brackets = nil; return; }
+  if(!_brackets) { _brackets = [CAShapeLayer layer]; _brackets.fillColor = nil; _brackets.lineWidth = 2; [self.layer addSublayer:_brackets]; }
+  _brackets.strokeColor = t.accent.CGColor;
+  _brackets.frame = self.bounds;
+  CGFloat w = self.bounds.size.width, h = self.bounds.size.height, l = 16;
+  UIBezierPath *path = [UIBezierPath bezierPath];
+  [path moveToPoint:CGPointMake(0, l)]; [path addLineToPoint:CGPointZero]; [path addLineToPoint:CGPointMake(l, 0)];
+  [path moveToPoint:CGPointMake(w - l, 0)]; [path addLineToPoint:CGPointMake(w, 0)]; [path addLineToPoint:CGPointMake(w, l)];
+  [path moveToPoint:CGPointMake(w, h - l)]; [path addLineToPoint:CGPointMake(w, h)]; [path addLineToPoint:CGPointMake(w - l, h)];
+  [path moveToPoint:CGPointMake(l, h)]; [path addLineToPoint:CGPointMake(0, h)]; [path addLineToPoint:CGPointMake(0, h - l)];
+  _brackets.path = path.CGPath;
+  GRGlow(_brackets, t.accent, 6);
+}
+@end
+
+// Hourly electricity prices: one bar per hour coloured by level, dashed lines at the day's maximum and minimum.
+@interface GRPriceChartView : UIView
+@property (nonatomic, copy) NSArray *prices; // 24 NSNumber (€/kWh) or NSNull
+@property (nonatomic) NSInteger currentHour, selectedHour; // -1 = none
+@property (nonatomic, copy, nullable) void (^onSelect)(NSInteger hour);
+@end
+
+@implementation GRPriceChartView
+- (instancetype)initWithFrame:(CGRect)frame {
+  if((self = [super initWithFrame:frame])) {
+    self.opaque = NO; self.backgroundColor = [UIColor clearColor]; self.contentMode = UIViewContentModeRedraw;
+    _currentHour = -1; _selectedHour = -1;
+    [self addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(touched:)]];
+    [self addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(touched:)]];
+    self.isAccessibilityElement = YES; self.accessibilityLabel = @"Preu de cada hora";
+  }
+  return self;
+}
+- (CGRect)plot { return CGRectMake(58, 16, MAX(1, self.bounds.size.width - 58 - 70), MAX(1, self.bounds.size.height - 16 - 30)); }
+- (void)touched:(UIGestureRecognizer *)gesture {
+  CGRect plot = [self plot];
+  NSInteger hour = (NSInteger)floor(([gesture locationInView:self].x - plot.origin.x) / (plot.size.width / 24));
+  hour = MAX(0, MIN(23, hour));
+  if(hour != _selectedHour && GRNum(self.prices.count == 24 ? self.prices[hour] : nil)) {
+    _selectedHour = hour; [self setNeedsDisplay];
+    if(self.onSelect) { self.onSelect(hour); }
+  }
+}
+- (void)drawText:(NSString *)text at:(CGPoint)point align:(NSTextAlignment)align color:(UIColor *)color {
+  NSDictionary *attributes = @{NSFontAttributeName: GRDigits(12, UIFontWeightRegular), NSForegroundColorAttributeName: color};
+  CGSize size = [text sizeWithAttributes:attributes];
+  CGFloat x = align == NSTextAlignmentRight ? point.x - size.width : (align == NSTextAlignmentCenter ? point.x - size.width / 2 : point.x);
+  [text drawAtPoint:CGPointMake(x, point.y - size.height / 2) withAttributes:attributes];
+}
+- (void)drawRect:(CGRect)rect {
+  GRTheme *t = [GRTheme current];
+  if(self.prices.count != 24) { return; }
+  CGContextRef context = UIGraphicsGetCurrentContext();
+  double low = DBL_MAX, high = -DBL_MAX;
+  for(id value in self.prices) { if(GRNum(value)) { low = MIN(low, [value doubleValue]); high = MAX(high, [value doubleValue]); } }
+  if(low > high) { return; }
+  CGRect plot = [self plot];
+  double top = high * 1.08, bottom = MIN(0, low);
+  CGFloat (^yFor)(double) = ^CGFloat(double value) { return CGRectGetMaxY(plot) - (value - bottom) / MAX(1e-6, top - bottom) * plot.size.height; };
+  for(NSInteger i = 0; i <= 4; i++) {
+    double value = bottom + (top - bottom) * i / 4;
+    CGFloat y = round(yFor(value)) + .5;
+    UIBezierPath *grid = [UIBezierPath bezierPath];
+    [grid moveToPoint:CGPointMake(CGRectGetMinX(plot), y)]; [grid addLineToPoint:CGPointMake(CGRectGetMaxX(plot), y)];
+    grid.lineWidth = 1; [t.line setStroke]; [grid stroke];
+    [self drawText:[GRLogic centsText:value] at:CGPointMake(CGRectGetMinX(plot) - 10, y) align:NSTextAlignmentRight color:t.muted];
+  }
+  CGFloat slot = plot.size.width / 24;
+  for(NSInteger hour = 0; hour < 24; hour++) {
+    NSNumber *price = GRNum(self.prices[hour]);
+    if(hour % 3 == 0) { [self drawText:GRPad2(hour) at:CGPointMake(plot.origin.x + slot * (hour + .5), CGRectGetMaxY(plot) + 16) align:NSTextAlignmentCenter color:t.muted]; }
+    if(!price) { continue; }
+    NSString *level = [GRLogic priceLevel:price.doubleValue prices:self.prices];
+    UIColor *color = [level isEqualToString:@"low"] ? t.good : ([level isEqualToString:@"high"] ? t.issue : t.accent);
+    BOOL focus = hour == self.currentHour || hour == self.selectedHour;
+    CGRect bar = CGRectMake(plot.origin.x + slot * hour + 2, yFor(price.doubleValue), slot - 4, CGRectGetMaxY(plot) - yFor(price.doubleValue));
+    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:bar byRoundingCorners:UIRectCornerTopLeft | UIRectCornerTopRight cornerRadii:CGSizeMake(GRRadius(4), GRRadius(4))];
+    CGContextSaveGState(context);
+    if(focus && t.glow > 0) { CGContextSetShadowWithColor(context, CGSizeZero, 8, [color colorWithAlphaComponent:t.glow].CGColor); }
+    [[color colorWithAlphaComponent:focus || self.currentHour < 0 ? 1 : .55] setFill]; [path fill];
+    CGContextRestoreGState(context);
+    if(hour == self.selectedHour && hour != self.currentHour) { path.lineWidth = 2; [t.highlight setStroke]; [path stroke]; }
+  }
+  if(self.currentHour >= 0) {
+    [self drawText:@"ARA" at:CGPointMake(plot.origin.x + slot * (self.currentHour + .5), plot.origin.y - 6) align:NSTextAlignmentCenter color:t.highlight];
+  }
+  for(NSArray *guide in @[@[@(high), @"màx"], @[@(low), @"mín"]]) {
+    CGFloat y = round(yFor([guide[0] doubleValue])) + .5;
+    UIBezierPath *line = [UIBezierPath bezierPath];
+    [line moveToPoint:CGPointMake(CGRectGetMinX(plot), y)]; [line addLineToPoint:CGPointMake(CGRectGetMaxX(plot), y)];
+    CGFloat dash[] = {5, 4}; [line setLineDash:dash count:2 phase:0];
+    line.lineWidth = 1.5; [t.highlight setStroke]; [line stroke];
+    [self drawText:[NSString stringWithFormat:@"%@ %@", guide[1], [GRLogic centsText:[guide[0] doubleValue]]] at:CGPointMake(CGRectGetMaxX(plot) + 8, y) align:NSTextAlignmentLeft color:t.highlight];
+  }
+}
 @end
 
 // iOS 11+ would add safe-area insets on its own (the Mac preview does); iOS 9 never does. Same layout on both.
@@ -71,7 +219,7 @@ static UIView *GRDot(BOOL lit) {
 
 #pragma mark - Controller
 
-@interface GRMainViewController () <UITextFieldDelegate, UIGestureRecognizerDelegate>
+@interface GRMainViewController () <UITextFieldDelegate>
 @property (nonatomic, strong, readwrite) GRPanelModel *model;
 @property (nonatomic) BOOL modalDirtyFlag;
 @end
@@ -113,8 +261,19 @@ static UIView *GRDot(BOOL lit) {
   BOOL _modalDirty;
   CGFloat _keyboardHeight;
   NSString *_configurationMessage, *_auditText;
-  UITextField *_serverField, *_tokenField, *_alarmField;
+  UITextField *_serverField, *_tokenField, *_lockField;
+  // Alarm code typed on the on-screen pin pad, and the dots that show how many digits it has.
+  NSMutableString *_alarmCode;
+  UILabel *_alarmDots;
   BOOL _night;
+  NSString *_style;
+  GRHUDView *_hud;
+  // Energy page: tomorrow's prices instead of today's, and the inspected hour (-1 = none).
+  BOOL _energyTomorrow;
+  NSInteger _energyHour;
+  // Water heater: target temperature waiting to be sent after the last tap on - or +.
+  GRTimer *_heaterTimer;
+  NSMutableDictionary<NSString *, NSNumber *> *_heaterTargets;
 }
 
 - (instancetype)init {
@@ -128,6 +287,9 @@ static UIView *GRDot(BOOL lit) {
     _cameraImages = [NSMutableDictionary dictionary];
     _cameraViews = [NSMapTable strongToWeakObjectsMapTable];
     _navButtons = [NSMutableArray array];
+    _alarmCode = [NSMutableString string];
+    _energyHour = -1;
+    _heaterTargets = [NSMutableDictionary dictionary];
   }
   return self;
 }
@@ -151,6 +313,8 @@ static UIView *GRDot(BOOL lit) {
   [super viewDidLoad];
   [self updateThemeFromPreferences];
   GRTheme *t = [GRTheme current];
+  _hud = [GRHUDView new];
+  [self.view addSubview:_hud];
 
   _clock = GRLabel(@"--:--", GRDigits(150, UIFontWeightThin), t.highlight);
   _date = GRLabel(nil, GRFont(20, UIFontWeightRegular), t.muted);
@@ -174,6 +338,7 @@ static UIView *GRDot(BOOL lit) {
   for(UIView *view in @[_clock, _date, _spark, _sparkCaption, _status]) { [self.view addSubview:view]; }
 
   NSArray *items = @[@[@"home", @"rooms", @"Estances"], @[@"thermometer", @"climate", @"Temperatura i humitat"],
+                     @[@"fan", @"devices", @"Aparells: escalfador, ventiladors i comandaments"], @[@"spark", @"energy", @"Preu de la llum"],
                      @[@"shield", @"security", @"Seguretat"], @[@"overview", @"overview", @"Resum de casa"]];
   for(NSArray *item in items) {
     GRNavButton *button = [[GRNavButton alloc] initWithIcon:item[0] destination:item[1] accessibility:item[2]];
@@ -181,7 +346,7 @@ static UIView *GRDot(BOOL lit) {
     [_navButtons addObject:button]; [self.view addSubview:button];
   }
   _settingsButton = [[GRNavButton alloc] initWithIcon:@"settings" destination:@"settings" accessibility:@"Ajustos"];
-  [_settingsButton addTarget:self action:@selector(openSettings) forControlEvents:UIControlEventTouchUpInside];
+  [_settingsButton addTarget:self action:@selector(navTapped:) forControlEvents:UIControlEventTouchUpInside];
   [self.view addSubview:_settingsButton];
 
   _scroll = [UIScrollView new];
@@ -193,17 +358,9 @@ static UIView *GRDot(BOOL lit) {
   [_scroll addSubview:_viewFlow];
   [self.view addSubview:_scroll];
 
-  // Swipe left or right anywhere to move between the pages, in the order of the navigation buttons.
-  for(NSNumber *direction in @[@(UISwipeGestureRecognizerDirectionLeft), @(UISwipeGestureRecognizerDirectionRight)]) {
-    UISwipeGestureRecognizer *swipe = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(swiped:)];
-    swipe.direction = direction.unsignedIntegerValue;
-    swipe.delegate = self;
-    [self.view addGestureRecognizer:swipe];
-  }
-
   [self buildModalLayer];
   _toastView = [UIView new];
-  _toastView.layer.cornerRadius = 16; _toastView.layer.borderWidth = 1;
+  _toastView.layer.borderWidth = 1;
   _toastView.hidden = YES; _toastView.userInteractionEnabled = NO;
   _toastLabel = GRWrappingLabel(nil, GRFont(14, UIFontWeightRegular), t.toastText, 0);
   [_toastView addSubview:_toastLabel];
@@ -233,7 +390,7 @@ static UIView *GRDot(BOOL lit) {
   _modalTitle.adjustsFontSizeToFitWidth = YES; _modalTitle.minimumScaleFactor = .55;
   _modalTitle.accessibilityTraits = UIAccessibilityTraitHeader;
   _closeButton = [UIButton buttonWithType:UIButtonTypeCustom];
-  _closeButton.layer.cornerRadius = 22; _closeButton.layer.borderWidth = 1;
+  _closeButton.layer.borderWidth = 1;
   _closeButton.accessibilityLabel = @"Tanca";
   [_closeButton setImage:GRIcon(@"close", NO) forState:UIControlStateNormal];
   [_closeButton addTarget:self action:@selector(closeModal) forControlEvents:UIControlEventTouchUpInside];
@@ -267,7 +424,7 @@ static UIView *GRDot(BOOL lit) {
   CGFloat capOffset = ceil(clockFont.ascender - clockFont.capHeight);
   _clock.frame = CGRectMake(side - 4, clockTop - capOffset, 480, ceil(clockFont.lineHeight));
   CGFloat y = clockTop + ceil(clockFont.capHeight) + 18;
-  _date.frame = CGRectMake(side + 2, y, 420, 26);
+  _date.frame = CGRectMake(side + 2, y, landscape ? MIN(470, floor(size.width * .46)) : size.width - 2 * side, 26);
   y += 26 + (landscape ? 36 : 26);
 
   CGFloat x = side + 2;
@@ -312,8 +469,12 @@ static UIView *GRDot(BOOL lit) {
     _scroll.contentInset = UIEdgeInsetsMake(14, 0, 14, 0);
   }
 
-  // The climate page takes the whole screen above the navigation: the clock column steps aside.
-  BOOL full = [_currentView isEqualToString:@"climate"] || [_currentView isEqualToString:@"security"];
+  // Every page except the rooms and the overview takes the whole screen above the navigation: the clock column steps aside.
+  BOOL full = ![_currentView isEqualToString:@"rooms"] && ![_currentView isEqualToString:@"overview"];
+  _hud.frame = self.view.bounds;
+  _hud.showRings = !full;
+  _hud.ringCenter = CGPointMake(CGRectGetMidX(_clock.frame) - (landscape ? 30 : 60), CGRectGetMidY(_clock.frame));
+  [_hud setNeedsDisplay];
   NSMutableArray *column = [@[_clock, _date, _spark, _sparkCaption, _humiditySpark, _humidityCaption] mutableCopy];
   [column addObjectsFromArray:_statLabels]; [column addObjectsFromArray:_statValues];
   for(UIView *view in column) { view.alpha = full ? 0 : 1; }
@@ -321,7 +482,9 @@ static UIView *GRDot(BOOL lit) {
   _scroll.scrollEnabled = !fixed;
   if(full) {
     _scroll.frame = CGRectMake(side, top + 26, size.width - 2 * side, navY - 24 - (top + 26));
-    _scroll.contentInset = fixed ? UIEdgeInsetsZero : UIEdgeInsetsMake(0, 0, 16, 0);
+    // While typing in Ajustos, the page scrolls above the keyboard.
+    CGFloat covered = MAX(0, _keyboardHeight - (size.height - CGRectGetMaxY(_scroll.frame)));
+    _scroll.contentInset = fixed ? UIEdgeInsetsZero : UIEdgeInsetsMake(0, 0, 16 + covered, 0);
     if(fixed) { _scroll.contentOffset = CGPointZero; }
     _status.textAlignment = NSTextAlignmentRight;
     _status.alpha = landscape ? 1 : 0;
@@ -351,13 +514,22 @@ static UIView *GRDot(BOOL lit) {
 
 - (void)updateThemeFromPreferences {
   _night = [GRLogic isNightForTheme:[GRPreferences shared].theme date:[NSDate date]];
-  [GRTheme setNight:_night];
+  _style = [GRPreferences shared].style;
+  [GRTheme setStyle:_style night:_night];
 }
 
 - (void)applyThemeColors {
   GRTheme *t = [GRTheme current];
   self.view.backgroundColor = t.background;
   _clock.textColor = t.highlight; _date.textColor = t.muted;
+  GRGlow(_clock.layer, t.highlight, 16);
+  _date.font = GRFont(20, UIFontWeightRegular);
+  for(UILabel *label in @[_sparkCaption, _humidityCaption, _status]) { label.font = GRFont(12, UIFontWeightRegular); }
+  _toastLabel.font = GRFont(14, UIFontWeightRegular);
+  _modalEyebrow.font = GRFont(12, UIFontWeightMedium);
+  _toastView.layer.cornerRadius = GRRadius(16);
+  _closeButton.layer.cornerRadius = GRRadius(22);
+  [_hud setNeedsDisplay];
   _sparkCaption.textColor = t.muted; _humidityCaption.textColor = t.muted; _status.textColor = t.muted;
   [_spark setNeedsDisplay]; [_humiditySpark setNeedsDisplay];
   for(GRNavButton *button in _navButtons) { [button applyTheme]; }
@@ -374,8 +546,9 @@ static UIView *GRDot(BOOL lit) {
 
 - (void)applyTheme {
   BOOL wasNight = _night;
+  NSString *wasStyle = _style;
   [self updateThemeFromPreferences];
-  if(wasNight == _night) { return; }
+  if(wasNight == _night && [wasStyle isEqualToString:_style]) { return; }
   [self applyThemeColors];
   [self renderView];
   [self rebuildModal];
@@ -386,11 +559,16 @@ static UIView *GRDot(BOOL lit) {
   [self applyTheme];
 }
 
+- (void)setStyleChoice:(NSString *)style {
+  [GRPreferences shared].style = style;
+  [self applyTheme];
+}
+
 - (void)clockTick {
   NSDate *now = [NSDate date];
   _clock.attributedText = GRKerned([GRLogic clockText:now], _clock.font, [GRTheme current].highlight, [self landscape] ? -6 : -5);
   _clock.accessibilityLabel = [@"Són les " stringByAppendingString:[GRLogic clockText:now]];
-  _date.text = [GRLogic dateText:now].lowercaseString;
+  [self renderDate];
   [self applyTheme];
   [_clockTimer cancel];
   __weak GRMainViewController *weakSelf = self;
@@ -410,7 +588,7 @@ static UIView *GRDot(BOOL lit) {
 - (void)appDidEnterBackground {
   [self.model enterBackground];
   [self stopCameraRefresh];
-  [_alarmField setText:@""];
+  [self clearAlarmCode];
   [_clockTimer cancel];
 }
 
@@ -423,8 +601,8 @@ static UIView *GRDot(BOOL lit) {
 #pragma mark Model delegate
 
 - (void)panelModel:(GRPanelModel *)model didUpdateWithForce:(BOOL)force changed:(BOOL)changed {
-  if(changed) { [self renderView]; [self refreshModal]; }
-  else { [self renderStatus]; }
+  if(changed && !([_currentView isEqualToString:@"settings"] && [self isEditingSettings])) { [self renderView]; [self refreshModal]; }
+  else { [self renderStatus]; [self renderDate]; }
 }
 
 - (void)panelModel:(GRPanelModel *)model showToast:(NSString *)message {
@@ -433,8 +611,8 @@ static UIView *GRDot(BOOL lit) {
 
 - (void)panelModel:(GRPanelModel *)model needsConfiguration:(NSString *)reason {
   _configurationMessage = reason;
-  if(![_modal[@"type"] isEqualToString:@"settings"]) { [self closeModal]; [self openSettings]; }
-  else { [self rebuildModal]; }
+  [self closeModal];
+  if(![_currentView isEqualToString:@"settings"] || ![self isEditingSettings]) { [self navigate:@"settings"]; }
 }
 
 - (void)panelModelHistoryDidChange:(GRPanelModel *)model {
@@ -470,6 +648,14 @@ static UIView *GRDot(BOOL lit) {
 - (BOOL)live { return self.model.connected || self.model.demo; }
 
 - (void)renderStatus { _status.text = [GRLogic lastUpdateText:self.model.fetchedAt connected:self.model.connected demo:self.model.demo]; }
+
+// The date, followed by the outdoor temperature when a weather.* entity is configured (Barcelona, for example).
+- (void)renderDate {
+  NSString *date = [GRLogic dateText:[NSDate date]].lowercaseString;
+  NSString *weather = [GRLogic weatherLine:self.model.entities connected:self.model.connected];
+  _date.text = weather ? [NSString stringWithFormat:@"%@  ·  %@", date, weather] : date;
+  _date.adjustsFontSizeToFitWidth = YES; _date.minimumScaleFactor = .7;
+}
 
 - (void)setStat:(NSUInteger)index label:(NSString *)label value:(NSString *)value font:(UIFont *)font color:(UIColor *)color {
   GRTheme *t = [GRTheme current];
@@ -507,7 +693,7 @@ static UIView *GRDot(BOOL lit) {
 
   // Trend of the first temperature sensor and the first humidity sensor that have history.
   NSInteger hours = self.model.historyHours;
-  NSString *period = hours == 6 ? @"6 h" : (hours == 168 ? @"7 dies" : (hours == 720 ? @"mes" : @"24 h"));
+  NSString *period = GRPeriodText(hours);
   NSArray *kinds = @[@[@"temperature", _spark, _sparkCaption, @"Temperatura", @"de la temperatura"],
                      @[@"humidity", _humiditySpark, _humidityCaption, @"Humitat", @"de la humitat"]];
   for(NSArray *kind in kinds) {
@@ -524,18 +710,35 @@ static UIView *GRDot(BOOL lit) {
     spark.values = values ?: @[];
     spark.hidden = !values;
     spark.accessibilityLabel = values ? [NSString stringWithFormat:@"Evolució %@ de %@", kind[4], name ?: @"casa"] : nil;
-    caption.text = values ? [NSString stringWithFormat:@"%@ · últim%@ %@", name ?: kind[3], hours == 720 ? @"" : @"es", period]
+    caption.text = values ? [NSString stringWithFormat:@"%@ · %@", name ?: kind[3], period]
                           : (self.model.historyLoading && spark == _spark ? @"Carregant l’historial…" : @"");
   }
   [self renderStatus];
+  [self renderDate];
   [self.view setNeedsLayout];
+}
+
+static NSString *GRPeriodText(NSInteger hours) {
+  switch(hours) {
+    case 1: return @"última hora";
+    case 168: return @"últims 7 dies";
+    case 336: return @"últims 14 dies";
+    case 720: return @"últim mes";
+    default: return [NSString stringWithFormat:@"últimes %ld h", (long)hours];
+  }
+}
+
+static NSString *GRDuration(NSInteger seconds) {
+  if(seconds < 60) { return [NSString stringWithFormat:@"%ld s", (long)seconds]; }
+  if(seconds < 3600) { return seconds % 60 ? [NSString stringWithFormat:@"%ld min %ld s", (long)(seconds / 60), (long)(seconds % 60)] : [NSString stringWithFormat:@"%ld min", (long)(seconds / 60)]; }
+  return seconds % 3600 ? [NSString stringWithFormat:@"%ld h %ld min", (long)(seconds / 3600), (long)(seconds % 3600 / 60)] : [NSString stringWithFormat:@"%ld h", (long)(seconds / 3600)];
 }
 
 #pragma mark Content helpers
 
 - (UILabel *)sectionLabel:(NSString *)text {
-  UILabel *label = GRLabel(nil, GRFont(13, UIFontWeightMedium), [GRTheme current].muted);
-  label.attributedText = GRKerned(text, GRFont(13, UIFontWeightMedium), [GRTheme current].muted, 2);
+  UILabel *label = GRLabel(nil, GRFont(13, UIFontWeightMedium), [GRTheme current].section);
+  label.attributedText = GRKerned(text, GRFont(13, UIFontWeightMedium), [GRTheme current].section, 2);
   label.accessibilityTraits = UIAccessibilityTraitHeader;
   return label;
 }
@@ -608,49 +811,12 @@ static UIView *GRDot(BOOL lit) {
   [self closeModal];
   if([destination isEqualToString:@"lights"]) { [self openCategory:@"lights" title:@"Il·luminació"]; return; }
   if([destination isEqualToString:@"scenes"]) { [self openCategory:@"scenes" title:@"Escenes i ambient"]; return; }
+  if(![destination isEqualToString:_currentView]) { _energyHour = -1; }
   _currentView = destination;
+  [self.view endEditing:YES];
   [self renderView];
+  [self.view setNeedsLayout];
   [_scroll setContentOffset:CGPointMake(0, -_scroll.contentInset.top) animated:NO];
-}
-
-#pragma mark Swipe between pages
-
-static NSArray<NSString *> *GRPages(void) { return @[@"rooms", @"climate", @"security", @"overview"]; }
-
-- (void)swiped:(UISwipeGestureRecognizer *)swipe {
-  NSArray *pages = GRPages();
-  NSInteger index = (NSInteger)[pages indexOfObject:_currentView];
-  if(index == NSNotFound) { return; }
-  BOOL forward = swipe.direction == UISwipeGestureRecognizerDirectionLeft;
-  NSInteger next = index + (forward ? 1 : -1);
-  if(next < 0 || next >= (NSInteger)pages.count) { return; }
-  // The new page slides in from the side the finger came from; the clock column fades in or out.
-  CATransition *transition = [CATransition animation];
-  transition.type = kCATransitionPush;
-  transition.subtype = forward ? kCATransitionFromRight : kCATransitionFromLeft;
-  transition.duration = .28;
-  transition.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
-  [_scroll.layer addAnimation:transition forKey:@"page"];
-  [self navigate:pages[next]];
-  [UIView animateWithDuration:.28 animations:^{ [self.view layoutIfNeeded]; }];
-  UIAccessibilityPostNotification(UIAccessibilityScreenChangedNotification, nil);
-}
-
-// No page swipe over controls that use horizontal drags (sliders, switches, the climate chart, scrolling strips),
-// nor while a drawer or the enlarged camera is open.
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
-  if(![gesture isKindOfClass:[UISwipeGestureRecognizer class]]) { return YES; }
-  if(_modal || _cameraZoom || ![GRPages() containsObject:_currentView]) { return NO; }
-  for(UIView *view = touch.view; view && view != self.view; view = view.superview) {
-    if([view isKindOfClass:[UISlider class]] || [view isKindOfClass:[UISwitch class]] || [view isKindOfClass:[GRClimateChartView class]]) { return NO; }
-    if([view isKindOfClass:[UIScrollView class]] && ((UIScrollView *)view).contentSize.width > view.bounds.size.width + 1) { return NO; }
-  }
-  return YES;
-}
-
-// The page's vertical scroll must not swallow a horizontal swipe.
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
-  return [gesture isKindOfClass:[UISwipeGestureRecognizer class]];
 }
 
 - (void)renderView {
@@ -659,9 +825,14 @@ static NSArray<NSString *> *GRPages(void) { return @[@"rooms", @"climate", @"sec
   _viewFlow = [GRFlowView new];
   [_scroll addSubview:_viewFlow];
   for(GRNavButton *button in _navButtons) { button.active = [button.destination isEqualToString:_currentView]; }
+  _settingsButton.active = [_currentView isEqualToString:@"settings"];
+  _serverField = nil; _tokenField = nil; _lockField = nil;
   if([_currentView isEqualToString:@"climate"]) { [self renderClimate]; }
   else if([_currentView isEqualToString:@"security"]) { [self renderSecurity]; }
   else if([_currentView isEqualToString:@"overview"]) { [self renderOverview]; }
+  else if([_currentView isEqualToString:@"devices"]) { [self renderDevices]; }
+  else if([_currentView isEqualToString:@"energy"]) { [self renderEnergy]; }
+  else if([_currentView isEqualToString:@"settings"]) { [self renderSettings]; }
   else { [self renderRooms]; }
   [self renderSide];
   [self layoutViewFlow];
@@ -744,6 +915,8 @@ static NSArray<NSString *> *GRPages(void) { return @[@"rooms", @"climate", @"sec
                                    (unsigned long)MIN(readyOn.count, readyOff.count), (unsigned long)lights.count]] top:12];
   }
 
+  [self addLightGroup:lights to:_viewFlow title:@"TOTS ELS LLUMS" top:28];
+
   // Scenes, one tap away.
   NSArray *scenes = [GRLogic entities:self.model.entities inCategory:@"scenes"];
   if(scenes.count) {
@@ -789,7 +962,8 @@ static NSArray<NSString *> *GRPages(void) { return @[@"rooms", @"climate", @"sec
   [_viewFlow addView:[self sectionLabel:self.model.demo ? @"RESUM DE CASA · SIMULACIÓ" : @"RESUM DE CASA"] top:0];
   NSArray *items = @[@[@"climate", @"Temperatura i humitat", @"thermometer"], @[@"lights", @"Il·luminació", @"light"],
                      @[@"security", @"Seguretat", @"shield"], @[@"water", @"Aigua calenta", @"water"], @[@"media", @"Música i televisió", @"media"],
-                     @[@"fans", @"Ventiladors", @"fan"], @[@"switches", @"Interruptors", @"light"], @[@"scenes", @"Escenes", @"spark"],
+                     @[@"fans", @"Ventiladors", @"fan"], @[@"energy", @"Preu de la llum", @"spark"], @[@"weather", @"Temps exterior", @"thermometer"],
+                     @[@"switches", @"Interruptors", @"light"], @[@"scenes", @"Escenes", @"spark"],
                      @[@"other", @"Altres dispositius", @"overview"]];
   NSMutableArray *rows = [NSMutableArray array];
   for(NSArray *item in items) {
@@ -816,9 +990,10 @@ static NSArray<NSString *> *GRPages(void) { return @[@"rooms", @"climate", @"sec
 
 - (void)summaryTapped:(UIControl *)row {
   NSString *category = row.accessibilityIdentifier;
-  if([category isEqualToString:@"climate"] || [category isEqualToString:@"security"]) { [self navigate:category]; return; }
+  if([category isEqualToString:@"climate"] || [category isEqualToString:@"security"] || [category isEqualToString:@"energy"]) { [self navigate:category]; return; }
+  if([category isEqualToString:@"water"] || [category isEqualToString:@"fans"]) { [self navigate:@"devices"]; return; }
   NSDictionary *titles = @{@"lights": @"Il·luminació", @"security": @"Seguretat", @"water": @"Aigua calenta", @"media": @"Música i televisió",
-                           @"fans": @"Ventiladors", @"switches": @"Interruptors", @"scenes": @"Escenes", @"other": @"Altres dispositius"};
+                           @"fans": @"Ventiladors", @"switches": @"Interruptors", @"scenes": @"Escenes", @"other": @"Altres dispositius", @"weather": @"Temps exterior"};
   [self openCategory:category title:titles[category] ?: @"Dispositius"];
 }
 
@@ -832,7 +1007,8 @@ static NSArray<NSString *> *GRPages(void) { return @[@"rooms", @"climate", @"sec
   title.attributedText = GRKerned(@"Clima", GRFont(40, UIFontWeightThin), t.highlight, -1);
   title.accessibilityTraits = UIAccessibilityTraitHeader;
   NSMutableArray *periods = [NSMutableArray array];
-  for(NSArray *period in @[@[@6, @"6 h"], @[@24, @"24 h"], @[@168, @"7 dies"], @[@720, @"1 mes"]]) {
+  for(NSArray *period in @[@[@1, @"1 h"], @[@3, @"3 h"], @[@6, @"6 h"], @[@12, @"12 h"], @[@24, @"24 h"], @[@48, @"48 h"],
+                           @[@168, @"7 d"], @[@336, @"14 d"], @[@720, @"30 d"]]) {
     NSInteger hours = [period[0] integerValue];
     GRButton *button = [GRButton buttonWithTitle:period[1] style:GRButtonStylePeriod handler:^(GRButton *b) {
       GRMainViewController *strongSelf = weakSelf;
@@ -843,19 +1019,27 @@ static NSArray<NSString *> *GRPages(void) { return @[@"rooms", @"climate", @"sec
     button.accessibilityTraits = UIAccessibilityTraitButton | (button.selectedLook ? UIAccessibilityTraitSelected : 0);
     [periods addObject:button];
   }
+  NSString *outdoor = [GRLogic weatherLine:self.model.entities connected:self.model.connected];
+  UILabel *weather = GRLabel(outdoor ? [@"Exterior · " stringByAppendingString:outdoor] : nil, GRFont(17, UIFontWeightLight), t.text);
+  weather.textAlignment = NSTextAlignmentRight;
+  weather.adjustsFontSizeToFitWidth = YES; weather.minimumScaleFactor = .7;
   GRBlockView *header = [GRBlockView new];
-  [header addSubview:title];
-  for(UIView *button in periods) { [header addSubview:button]; }
+  [header addSubview:title]; [header addSubview:weather];
   header.measure = ^CGFloat(CGFloat width) { return 52; };
   header.layout = ^(UIView *view) {
-    CGFloat x = view.bounds.size.width;
-    for(UIView *button in [periods reverseObjectEnumerator]) {
-      CGFloat w = MAX(64, ceil([button sizeThatFits:CGSizeMake(200, 44)].width));
-      x -= w; button.frame = CGRectMake(x, 4, w, 44); x -= 8;
-    }
-    title.frame = CGRectMake(0, 0, x - 12, 52);
+    CGFloat w = view.bounds.size.width;
+    title.frame = CGRectMake(0, 0, 160, 52);
+    weather.frame = CGRectMake(170, 0, w - 170, 52);
   };
   [_viewFlow addView:header top:0];
+  GRBlockView *periodRow = [GRBlockView new];
+  for(UIView *button in periods) { [periodRow addSubview:button]; }
+  periodRow.measure = ^CGFloat(CGFloat width) { return 44; };
+  periodRow.layout = ^(UIView *view) {
+    CGFloat w = floor((view.bounds.size.width - 8 * (periods.count - 1)) / periods.count);
+    for(NSUInteger i = 0; i < periods.count; i++) { [periods[i] setFrame:CGRectMake(i * (w + 8), 0, w, 44)]; }
+  };
+  [_viewFlow addView:periodRow top:10];
 
   if(!sensors.count) {
     [_viewFlow addView:GRWrappingLabel(self.model.connected ? @"Encara no hi ha lectures ambientals." : @"Esperant dades de Home Assistant.", GRFont(28, UIFontWeightLight), t.text, 0) top:40];
@@ -891,7 +1075,7 @@ static NSArray<NSString *> *GRPages(void) { return @[@"rooms", @"climate", @"sec
     NSString *roomName = GRStr([GRLogic roomWithId:GRStr(sensor[@"room"]) ?: @""][@"name"]) ?: @"Sense estança";
     NSString *reading = format(sensor, [GRLogic numericState:sensor connected:self.model.connected]);
     GRRowControl *chip = [GRRowControl new];
-    chip.layer.cornerRadius = 16; chip.layer.borderWidth = selected ? 1.5 : 1;
+    chip.layer.cornerRadius = GRRadius(16); chip.layer.borderWidth = selected ? 1.5 : 1;
     chip.layer.borderColor = (selected ? t.accent : t.edge).CGColor;
     chip.clipsToBounds = YES;
     UILabel *room = GRLabel(nil, GRFont(11, UIFontWeightMedium), selected ? t.accent : t.muted);
@@ -990,8 +1174,8 @@ static NSArray<NSString *> *GRPages(void) { return @[@"rooms", @"climate", @"sec
   [chartRow addSubview:chart];
   chartRow.measure = ^CGFloat(CGFloat width) {
     GRMainViewController *strongSelf = weakSelf;
-    // Whatever height is left below the header, sensors and reading (52 + 18 + 64 + 20 + 96 + 16).
-    return MAX(240, (strongSelf ? strongSelf->_scroll.bounds.size.height : 400) - 266);
+    // Whatever height is left below the header, periods, sensors and reading (52 + 54 + 18 + 64 + 20 + 96 + 16).
+    return MAX(220, (strongSelf ? strongSelf->_scroll.bounds.size.height : 400) - 320);
   };
   chartRow.layout = ^(UIView *view) { chart.frame = view.bounds; [chart setNeedsDisplay]; };
   [_viewFlow addView:chartRow top:16];
@@ -1008,9 +1192,9 @@ static NSArray<NSString *> *GRPages(void) { return @[@"rooms", @"climate", @"sec
 // Bordered card with a spaced heading and an optional note on the right.
 - (GRFlowView *)card:(NSString *)title note:(NSString *)note {
   GRTheme *t = [GRTheme current];
-  GRFlowView *card = [GRFlowView new];
+  GRFlowView *card = [GRCardView new];
   card.insets = UIEdgeInsetsMake(20, 22, 22, 22);
-  card.layer.cornerRadius = 20; card.layer.borderWidth = 1; card.layer.borderColor = t.edge.CGColor;
+  card.layer.cornerRadius = GRRadius(20); card.layer.borderWidth = 1; card.layer.borderColor = t.edge.CGColor;
   UILabel *heading = [self sectionLabel:title];
   UILabel *side = GRLabel(note, GRFont(13, UIFontWeightRegular), t.muted);
   side.textAlignment = NSTextAlignmentRight;
@@ -1103,7 +1287,7 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
   NSString *summary = !connected ? @"Pendent de connexió" : (!openings.count ? @"" : (open ? (open == 1 ? @"1 porta o finestra oberta" : [NSString stringWithFormat:@"%lu portes o finestres obertes", (unsigned long)open]) : @"Tot tancat"));
   UILabel *badge = GRLabel(summary, GRFont(15, UIFontWeightMedium), open ? t.issue : t.accent);
   badge.textAlignment = NSTextAlignmentCenter;
-  badge.layer.cornerRadius = 18; badge.layer.borderWidth = summary.length ? 1 : 0; badge.layer.borderColor = (open ? t.issue : t.edge).CGColor;
+  badge.layer.cornerRadius = GRRadius(18); badge.layer.borderWidth = summary.length ? 1 : 0; badge.layer.borderColor = (open ? t.issue : t.edge).CGColor;
   GRBlockView *header = [GRBlockView new];
   [header addSubview:title]; [header addSubview:badge];
   header.measure = ^CGFloat(CGFloat width) { return 52; };
@@ -1177,14 +1361,14 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
     if(camera) {
       UIImageView *image = [[UIImageView alloc] initWithImage:_cameraImages[_cameraEntity]];
       image.contentMode = UIViewContentModeScaleAspectFill; image.clipsToBounds = YES;
-      image.backgroundColor = t.line; image.layer.cornerRadius = 14;
+      image.backgroundColor = t.line; image.layer.cornerRadius = GRRadius(14);
       image.userInteractionEnabled = YES;
       image.isAccessibilityElement = YES; image.accessibilityTraits = UIAccessibilityTraitButton | UIAccessibilityTraitImage;
       image.accessibilityLabel = [@"Imatge de la càmera; toca per ampliar-la. " stringByAppendingString:GRShortName(camera, @[@" mainstream"])];
       [image addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(zoomCamera)]];
       UILabel *live = GRLabel(nil, GRFont(11, UIFontWeightSemibold), [UIColor whiteColor]);
       live.tag = 31; live.textAlignment = NSTextAlignmentCenter;
-      live.backgroundColor = GRHexA(0x000000, .55); live.layer.cornerRadius = 10; live.clipsToBounds = YES;
+      live.backgroundColor = GRHexA(0x000000, .55); live.layer.cornerRadius = GRRadius(10); live.clipsToBounds = YES;
       [image addSubview:live];
       UILabel *problem = GRLabel(nil, GRFont(14, UIFontWeightRegular), t.muted);
       problem.tag = 33; problem.textAlignment = NSTextAlignmentCenter; problem.numberOfLines = 3;
@@ -1312,6 +1496,500 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
   }
 }
 
+#pragma mark - Lights together
+
+static NSDictionary *GRControl(NSDictionary *entity, NSString *action) {
+  for(id item in GRArray(entity[@"controls"]) ?: @[]) { if([GRStr(GRDict(item)[@"action"]) isEqualToString:action]) { return item; } }
+  return nil;
+}
+
+// One brightness and one warmth slider for every light that has them (the Philips Hue lights): the lit ones
+// change; when none is lit, all of them switch on with that value.
+- (void)addLightGroup:(NSArray *)lights to:(GRFlowView *)flow title:(NSString *)title top:(CGFloat)top {
+  GRTheme *t = [GRTheme current];
+  BOOL canCommand = self.model.connected && !self.model.preview && !self.model.busy;
+  __weak GRMainViewController *weakSelf = self;
+  BOOL headed = NO;
+  for(NSArray *kind in @[@[@"brightness", @"Brillantor"], @[@"color_temp_kelvin", @"Escalfor"]]) {
+    NSString *action = kind[0];
+    BOOL warmth = [action isEqualToString:@"color_temp_kelvin"];
+    NSMutableArray *capable = [NSMutableArray array];
+    double low = DBL_MAX, high = -DBL_MAX;
+    NSString *reason = nil;
+    for(NSDictionary *light in lights) {
+      NSDictionary *control = GRControl(light, action);
+      if(![control[@"kind"] isEqual:@"range"] || !GRNum(control[@"min"]) || !GRNum(control[@"max"])) { continue; }
+      [capable addObject:light];
+      low = MIN(low, [control[@"min"] doubleValue]); high = MAX(high, [control[@"max"] doubleValue]);
+      if(!reason && ![control[@"enabled"] isEqual:@YES]) { reason = GRStr(control[@"reason"]); }
+    }
+    if(!capable.count || low >= high) { continue; }
+    NSArray *ready = [GRLogic availableLights:capable action:action];
+    NSMutableArray *lit = [NSMutableArray array];
+    double total = 0; NSUInteger counted = 0;
+    for(NSDictionary *light in ready) {
+      if(![GRStr(light[@"state"]) isEqualToString:@"on"]) { continue; }
+      [lit addObject:light];
+      NSNumber *value = GRNum(GRDict(light[@"attributes"])[action]);
+      if(value) { total += value.doubleValue; counted++; }
+    }
+    NSArray *targets = lit.count ? lit : ready;
+    double current = counted ? total / counted : (warmth ? MIN(high, MAX(low, 2700)) : 255);
+    if(!headed) { [flow addView:[self sectionLabel:title] top:top]; headed = YES; }
+    UILabel *caption = GRLabel(nil, GRFont(15, UIFontWeightRegular), t.text);
+    UISlider *slider = [UISlider new];
+    slider.minimumValue = warmth ? low : 1; slider.maximumValue = warmth ? high : 255;
+    slider.value = current;
+    slider.enabled = canCommand && targets.count;
+    slider.minimumTrackTintColor = warmth ? GRHex(0xffa647) : t.accent;
+    slider.maximumTrackTintColor = warmth ? GRHex(0xa8dcff) : t.line;
+    slider.accessibilityLabel = [NSString stringWithFormat:@"%@ de tots els llums", [kind[1] lowercaseString]];
+    NSString *(^shown)(double) = ^NSString *(double value) {
+      if(!warmth) { return [NSString stringWithFormat:@"%ld %%", GRRound(value / 255 * 100)]; }
+      NSString *word = value < 3300 ? @"càlida" : (value < 4600 ? @"neutra" : @"freda");
+      return [NSString stringWithFormat:@"%ld K · %@", GRRound(value), word];
+    };
+    void (^update)(void) = ^{
+      caption.text = [NSString stringWithFormat:@"%@ · %@", kind[1], shown(slider.value)];
+      slider.accessibilityValue = shown(slider.value);
+    };
+    update();
+    GROnEvent(slider, UIControlEventValueChanged, ^{ update(); weakSelf.modalDirtyFlag = YES; });
+    GROnEvent(slider, UIControlEventTouchUpInside | UIControlEventTouchUpOutside, ^{
+      weakSelf.modalDirtyFlag = NO;
+      [weakSelf.model adjustLights:targets action:action value:@(GRRound(slider.value))];
+    });
+    [flow addView:caption top:14];
+    [flow addView:slider top:4 height:36];
+    if(warmth) {
+      UILabel *warm = GRLabel(@"Càlida", GRFont(12, UIFontWeightRegular), t.muted), *cool = GRLabel(@"Freda", GRFont(12, UIFontWeightRegular), t.muted);
+      cool.textAlignment = NSTextAlignmentRight;
+      GRBlockView *ends = [GRBlockView new];
+      [ends addSubview:warm]; [ends addSubview:cool];
+      ends.measure = ^CGFloat(CGFloat width) { return 16; };
+      ends.layout = ^(UIView *view) { CGFloat w = view.bounds.size.width / 2; warm.frame = CGRectMake(0, 0, w, 16); cool.frame = CGRectMake(w, 0, w, 16); };
+      [flow addView:ends top:0];
+    }
+    NSString *note = !ready.count ? (reason ?: @"Cap llum té aquesta ordre verificada.")
+      : (lit.count ? [NSString stringWithFormat:@"Canvia %lu %@.", (unsigned long)lit.count, lit.count == 1 ? @"llum encès" : @"llums encesos"]
+                   : [NSString stringWithFormat:@"Cap llum encès: se n’encendran %lu.", (unsigned long)ready.count]);
+    if(ready.count < capable.count && ready.count) { note = [note stringByAppendingFormat:@" %lu sense l’ordre verificada.", (unsigned long)(capable.count - ready.count)]; }
+    [flow addView:[self note:note] top:4];
+  }
+}
+
+#pragma mark - Devices page (water heater, fans, remotes)
+
+// Label on the left, value on the right, hairline below.
+- (UIView *)infoRow:(NSString *)label value:(NSString *)value issue:(BOOL)issue {
+  GRTheme *t = [GRTheme current];
+  UILabel *name = GRLabel(label, GRFont(15, UIFontWeightRegular), t.muted);
+  UILabel *text = GRLabel(value, GRDigits(16, UIFontWeightRegular), issue ? t.issue : t.text);
+  text.textAlignment = NSTextAlignmentRight;
+  text.adjustsFontSizeToFitWidth = YES; text.minimumScaleFactor = .7;
+  UIView *rule = [UIView new]; rule.backgroundColor = t.line;
+  GRBlockView *row = [GRBlockView new];
+  for(UIView *view in @[name, text, rule]) { [row addSubview:view]; }
+  row.isAccessibilityElement = YES;
+  row.accessibilityLabel = [NSString stringWithFormat:@"%@: %@", label, value];
+  row.measure = ^CGFloat(CGFloat width) { return 42; };
+  row.layout = ^(UIView *view) {
+    CGFloat w = view.bounds.size.width;
+    CGFloat vw = MIN(w * .55, ceil([text sizeThatFits:CGSizeZero].width));
+    text.frame = CGRectMake(w - vw, 11, vw, 20);
+    name.frame = CGRectMake(0, 11, w - vw - 10, 20);
+    rule.frame = CGRectMake(0, 41, w, 1);
+  };
+  return row;
+}
+
+static NSString *GRAttributeValue(NSString *key, id value, NSString *unit) {
+  // JSON true/false arrive as CFBoolean, which objCType cannot tell apart from a small number.
+  if(value && CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()) { return [value boolValue] ? @"Sí" : @"No"; }
+  if([value isKindOfClass:[NSNumber class]]) {
+    NSString *number = [GRFormatNumber([value doubleValue]) stringByReplacingOccurrencesOfString:@"." withString:@","];
+    return [key rangeOfString:@"temp"].location != NSNotFound ? [NSString stringWithFormat:@"%@ %@", number, unit] : number;
+  }
+  NSString *text = GRStr(value) ?: @"—";
+  return [text isEqualToString:@"on"] ? @"Activat" : ([text isEqualToString:@"off"] ? @"Desactivat" : text);
+}
+
+- (GRFlowView *)heaterCard:(NSDictionary *)heater {
+  GRTheme *t = [GRTheme current];
+  __weak GRMainViewController *weakSelf = self;
+  NSDictionary *a = GRDict(heater[@"attributes"]) ?: @{};
+  NSString *entityId = GRStr(heater[@"entity_id"]) ?: @"";
+  BOOL ok = [heater[@"status"] isEqual:@"ok"] && self.model.connected;
+  BOOL canCommand = self.model.connected && !self.model.preview && !self.model.busy;
+  NSString *unit = GRStr(a[@"temperature_unit"]) ?: @"°C";
+  NSDictionary *setTemperature = GRControl(heater, @"set_temperature"), *mode = GRControl(heater, @"set_operation_mode");
+  NSDictionary *turnOn = GRControl(heater, @"turn_on"), *turnOff = GRControl(heater, @"turn_off");
+  NSDictionary *awayOn = GRControl(heater, @"away_mode_on"), *awayOff = GRControl(heater, @"away_mode_off");
+  NSMutableOrderedSet *reasons = [NSMutableOrderedSet orderedSet];
+  for(id control in GRArray(heater[@"controls"]) ?: @[]) {
+    if(![GRDict(control)[@"enabled"] isEqual:@YES] && GRStr(GRDict(control)[@"reason"]).length) { [reasons addObject:control[@"reason"]]; }
+  }
+  GRFlowView *card = [self card:@"ESCALFADOR" note:GRShortName(heater, @[])];
+
+  // Current water temperature in large, the target next to it, the state and the power switch.
+  NSNumber *current = ok ? GRNum(a[@"current_temperature"]) : nil, *target = ok ? GRNum(a[@"temperature"]) : nil;
+  UILabel *nowLabel = GRLabel(nil, GRFont(12, UIFontWeightMedium), t.section);
+  nowLabel.attributedText = GRKerned(@"ARA", nowLabel.font, t.section, 1.5);
+  UILabel *now = GRLabel(current ? [[GRLogic shortNumber:current.doubleValue] stringByAppendingString:@"°"] : @"—", GRDigits(64, UIFontWeightThin), t.highlight);
+  GRGlow(now.layer, t.highlight, 12);
+  UILabel *targetLabel = GRLabel(nil, GRFont(12, UIFontWeightMedium), t.section);
+  targetLabel.attributedText = GRKerned(@"OBJECTIU", targetLabel.font, t.section, 1.5);
+  UILabel *targetValue = GRLabel(target ? [[GRLogic shortNumber:target.doubleValue] stringByAppendingString:@"°"] : @"—", GRDigits(34, UIFontWeightLight), t.text);
+  UILabel *state = GRLabel([GRLogic stateTextForEntity:heater connected:self.model.connected demo:self.model.demo], GRFont(16, UIFontWeightRegular), ok ? t.muted : t.issue);
+  state.textAlignment = NSTextAlignmentRight;
+  UISwitch *power = nil;
+  if(turnOn && turnOff) {
+    power = [UISwitch new];
+    power.on = ok && ![GRStr(heater[@"state"]) isEqualToString:@"off"];
+    power.enabled = canCommand && ok && [turnOn[@"enabled"] isEqual:@YES] && [turnOff[@"enabled"] isEqual:@YES];
+    GRStyleSwitch(power);
+    power.accessibilityLabel = @"Escalfador encès";
+    __weak UISwitch *weakPower = power;
+    GROnEvent(power, UIControlEventValueChanged, ^{ GRStyleSwitch(weakPower); [weakSelf sendAction:heater control:weakPower.on ? turnOn : turnOff value:nil code:nil]; });
+  }
+  GRBlockView *top = [GRBlockView new];
+  for(UIView *view in @[nowLabel, now, targetLabel, targetValue, state]) { [top addSubview:view]; }
+  if(power) { [top addSubview:power]; }
+  top.measure = ^CGFloat(CGFloat width) { return 96; };
+  top.layout = ^(UIView *view) {
+    CGFloat w = view.bounds.size.width;
+    nowLabel.frame = CGRectMake(0, 4, 140, 16); now.frame = CGRectMake(0, 20, 160, 72);
+    targetLabel.frame = CGRectMake(168, 4, 110, 16); targetValue.frame = CGRectMake(168, 30, 110, 42);
+    CGSize ps = power ? [power sizeThatFits:CGSizeZero] : CGSizeZero;
+    if(power) { power.frame = CGRectMake(w - ps.width, 8, ps.width, ps.height); }
+    state.frame = CGRectMake(280, power ? 50 : 30, w - 280, 22);
+  };
+  [card addView:top top:12];
+
+  // Target temperature: - and + change it, and it is sent 1.5 s after the last tap.
+  if(setTemperature && ok) {
+    double step = GRNum(setTemperature[@"step"]).doubleValue > 0 ? GRNum(setTemperature[@"step"]).doubleValue : .5;
+    double minimum = [GRNum(setTemperature[@"min"]) doubleValue], maximum = [GRNum(setTemperature[@"max"]) doubleValue];
+    NSNumber *pending = _heaterTargets[entityId] ?: GRNum(setTemperature[@"value"]) ?: @(minimum);
+    BOOL enabled = canCommand && [setTemperature[@"enabled"] isEqual:@YES];
+    UILabel *value = GRLabel(nil, GRDigits(30, UIFontWeightLight), _heaterTargets[entityId] ? t.accent : t.text);
+    value.textAlignment = NSTextAlignmentCenter;
+    void (^show)(double) = ^(double v) { value.text = [NSString stringWithFormat:@"%@ %@", [[GRLogic shortNumber:v] stringByReplacingOccurrencesOfString:@",0" withString:@""], unit]; };
+    show(pending.doubleValue);
+    void (^change)(double) = ^(double delta) {
+      GRMainViewController *strongSelf = weakSelf;
+      if(!strongSelf) { return; }
+      double next = (strongSelf->_heaterTargets[entityId] ?: pending).doubleValue + delta;
+      next = MAX(minimum, MIN(maximum, round(next / step) * step));
+      strongSelf->_heaterTargets[entityId] = @(next);
+      show(next); value.textColor = [GRTheme current].accent;
+      [strongSelf->_heaterTimer cancel];
+      strongSelf->_heaterTimer = [GRTimer after:1.5 block:^{
+        GRMainViewController *inner = weakSelf;
+        NSNumber *chosen = inner ? inner->_heaterTargets[entityId] : nil;
+        if(!chosen) { return; }
+        [inner->_heaterTargets removeObjectForKey:entityId];
+        double v = chosen.doubleValue;
+        [inner sendAction:heater control:setTemperature value:v == floor(v) ? @((long long)v) : @(v) code:nil];
+      }];
+    };
+    GRButton *minus = [GRButton buttonWithTitle:@"−" style:GRButtonStyleOutline handler:^(GRButton *b) { change(-step); }];
+    GRButton *plus = [GRButton buttonWithTitle:@"+" style:GRButtonStyleOutline handler:^(GRButton *b) { change(step); }];
+    minus.fontSize = 30; plus.fontSize = 30;
+    minus.enabled = enabled; plus.enabled = enabled;
+    minus.accessibilityLabel = @"Baixa la temperatura objectiu"; plus.accessibilityLabel = @"Puja la temperatura objectiu";
+    GRBlockView *stepper = [GRBlockView new];
+    for(UIView *view in @[minus, value, plus]) { [stepper addSubview:view]; }
+    stepper.measure = ^CGFloat(CGFloat width) { return 60; };
+    stepper.layout = ^(UIView *view) {
+      CGFloat w = view.bounds.size.width;
+      minus.frame = CGRectMake(0, 0, 84, 60); plus.frame = CGRectMake(w - 84, 0, 84, 60); value.frame = CGRectMake(90, 0, w - 180, 60);
+    };
+    [card addView:GRLabel([NSString stringWithFormat:@"Temperatura objectiu · de %@ a %@ %@", GRFormatNumber(minimum), GRFormatNumber(maximum), unit], GRFont(13, UIFontWeightRegular), t.muted) top:16];
+    [card addView:stepper top:8];
+  }
+
+  // Operation modes: one tap sends the mode.
+  NSArray *options = GRArray(mode[@"options"]);
+  if(mode && options.count && ok) {
+    [card addView:GRLabel(@"Mode", GRFont(13, UIFontWeightRegular), t.muted) top:16];
+    GRWrapView *modes = [GRWrapView new];
+    modes.horizontalSpacing = 8;
+    NSString *selected = GRStr(mode[@"value"]);
+    for(id option in options) {
+      if(!GRStr(option)) { continue; }
+      GRButton *chip = [GRButton buttonWithTitle:option style:GRButtonStylePeriod handler:^(GRButton *b) {
+        if(![option isEqual:selected]) { [weakSelf sendAction:heater control:mode value:option code:nil]; }
+      }];
+      chip.selectedLook = [option isEqual:selected];
+      chip.enabled = canCommand && [mode[@"enabled"] isEqual:@YES];
+      [modes addSubview:chip];
+    }
+    [card addView:modes top:8];
+  }
+
+  if(awayOn && awayOff && ok) {
+    UIView *row = [self switchRow:@"Mode absència" on:[GRStr(a[@"away_mode"]) isEqualToString:@"on"] changed:^(BOOL on) {
+      [weakSelf sendAction:heater control:on ? awayOn : awayOff value:nil code:nil];
+    }];
+    for(UIView *child in row.subviews) {
+      if([child isKindOfClass:[UISwitch class]]) { ((UISwitch *)child).enabled = canCommand && [awayOn[@"enabled"] isEqual:@YES]; }
+    }
+    [card addView:row top:10];
+  }
+  if(ok) { for(NSString *reason in reasons) { [card addView:[self note:reason] top:8]; } }
+
+  // Everything else the heater reports.
+  if(ok) {
+    NSDictionary *labels = @{@"current_temperature": @"Temperatura actual", @"temperature": @"Temperatura objectiu",
+                             @"target_temp_high": @"Objectiu màxim", @"target_temp_low": @"Objectiu mínim", @"min_temp": @"Mínim admès",
+                             @"max_temp": @"Màxim admès", @"target_temp_step": @"Pas de temperatura", @"operation_mode": @"Mode", @"away_mode": @"Mode absència"};
+    NSArray *order = @[@"current_temperature", @"temperature", @"target_temp_low", @"target_temp_high", @"operation_mode", @"away_mode", @"min_temp", @"max_temp", @"target_temp_step"];
+    NSSet *skip = [NSSet setWithArray:@[@"friendly_name", @"supported_features", @"operation_list", @"temperature_unit"]];
+    NSMutableArray *keys = [NSMutableArray array];
+    for(NSString *key in order) { if(a[key] && a[key] != [NSNull null]) { [keys addObject:key]; } }
+    for(NSString *key in [[a allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
+      if(![keys containsObject:key] && ![skip containsObject:key] && a[key] != [NSNull null] && ![a[key] isKindOfClass:[NSArray class]]) { [keys addObject:key]; }
+    }
+    if(keys.count) {
+      [card addView:[self sectionLabel:@"TOTA LA INFORMACIÓ"] top:22];
+      for(NSString *key in keys) {
+        NSString *label = labels[key];
+        if(!label) { label = [[key stringByReplacingOccurrencesOfString:@"_" withString:@" "] stringByReplacingCharactersInRange:NSMakeRange(0, 1) withString:[[key substringToIndex:1] uppercaseString]]; }
+        [card addView:[self infoRow:label value:GRAttributeValue(key, a[key], unit) issue:NO] top:0];
+      }
+    }
+  }
+  // Sensors of the same device (sensor.<heater>_..., switch.<heater>_...).
+  NSString *objectId = [entityId componentsSeparatedByString:@"."].lastObject;
+  NSMutableArray *related = [NSMutableArray array];
+  for(NSDictionary *entity in self.model.entities) {
+    NSString *other = [GRStr(entity[@"entity_id"]) componentsSeparatedByString:@"."].lastObject ?: @"";
+    if(objectId.length && ![entity[@"entity_id"] isEqual:entityId] && [other hasPrefix:[objectId stringByAppendingString:@"_"]]) { [related addObject:entity]; }
+  }
+  if(related.count) {
+    [card addView:[self sectionLabel:@"SENSORS DE L’ESCALFADOR"] top:22];
+    for(NSDictionary *entity in related) {
+      BOOL fine = [entity[@"status"] isEqual:@"ok"] && self.model.connected;
+      [card addView:[self infoRow:GRShortName(entity, @[]) value:[GRLogic stateTextForEntity:entity connected:self.model.connected demo:self.model.demo] issue:!fine] top:0];
+    }
+  }
+  return card;
+}
+
+- (GRFlowView *)remoteCard:(NSDictionary *)remote {
+  GRTheme *t = [GRTheme current];
+  __weak GRMainViewController *weakSelf = self;
+  BOOL canCommand = self.model.connected && !self.model.preview && !self.model.busy;
+  GRFlowView *card = [self card:@"COMANDAMENT" note:GRShortName(remote, @[])];
+  NSMutableArray *buttons = [NSMutableArray array];
+  NSString *reason = nil;
+  for(id item in GRArray(remote[@"controls"]) ?: @[]) {
+    NSDictionary *control = GRDict(item);
+    if(![GRStr(control[@"action"]) hasPrefix:@"command_"]) { continue; }
+    GRButton *button = [GRButton buttonWithTitle:GRStr(control[@"label"]) style:GRButtonStyleOutline handler:^(GRButton *b) {
+      [weakSelf sendAction:remote control:control value:nil code:nil];
+    }];
+    button.enabled = canCommand && [control[@"enabled"] isEqual:@YES];
+    if(!reason && ![control[@"enabled"] isEqual:@YES]) { reason = GRStr(control[@"reason"]); }
+    [buttons addObject:button];
+  }
+  if(buttons.count) {
+    GRBlockView *grid = [GRBlockView new];
+    for(UIView *button in buttons) { [grid addSubview:button]; }
+    NSUInteger (^columns)(CGFloat) = ^NSUInteger(CGFloat width) { return MAX(2, MIN(5, (NSUInteger)floor((width + 10) / 120))); };
+    grid.measure = ^CGFloat(CGFloat width) { NSUInteger rows = (buttons.count + columns(width) - 1) / columns(width); return rows * 64 - 10; };
+    grid.layout = ^(UIView *view) {
+      NSUInteger c = columns(view.bounds.size.width);
+      CGFloat w = floor((view.bounds.size.width - 10 * (c - 1)) / c);
+      for(NSUInteger i = 0; i < buttons.count; i++) { [buttons[i] setFrame:CGRectMake((i % c) * (w + 10), (i / c) * 64, w, 54)]; }
+    };
+    [card addView:grid top:14];
+    if(reason.length && self.model.connected) { [card addView:[self note:reason] top:10]; }
+  } else if(![remote[@"status"] isEqual:@"ok"] || !self.model.connected) {
+    [card addView:GRWrappingLabel([GRLogic stateTextForEntity:remote connected:self.model.connected demo:self.model.demo], GRFont(15, UIFontWeightRegular), t.issue, 0) top:12];
+  } else {
+    [card addView:[self note:@"Afegeix els botons a remote_buttons (remote.entitat:dispositiu:ordre:Etiqueta) i remote.entitat:send_command a verified_actions."] top:12];
+  }
+  return card;
+}
+
+- (void)renderDevices {
+  NSArray *entities = self.model.entities;
+  NSMutableArray *heaters = [NSMutableArray array], *fans = [NSMutableArray array], *remotes = [NSMutableArray array];
+  for(NSDictionary *entity in entities) {
+    NSString *domain = GRStr(entity[@"domain"]);
+    if([domain isEqualToString:@"water_heater"]) { [heaters addObject:entity]; }
+    else if([domain isEqualToString:@"fan"]) { [fans addObject:entity]; }
+    else if([domain isEqualToString:@"remote"]) { [remotes addObject:entity]; }
+  }
+  [_viewFlow addView:[self pageTitle:@"Aparells"] top:0 height:52];
+  NSMutableArray *left = [NSMutableArray array], *right = [NSMutableArray array];
+  for(NSDictionary *heater in heaters) { [left addObject:[self heaterCard:heater]]; }
+  if(fans.count) {
+    GRFlowView *card = [self card:@"VENTILADORS" note:@""];
+    [self addEntities:fans to:card];
+    [(left.count ? right : left) addObject:card];
+  }
+  for(NSDictionary *remote in remotes) { [(left.count ? right : left) addObject:[self remoteCard:remote]]; }
+  if(!left.count) {
+    [_viewFlow addView:[self note:@"Afegeix a entity_ids l’escalfador (water_heater.*), els ventiladors (fan.*) i els emissors d’infrarojos o ràdio (remote.*) per controlar-los des d’aquí."] top:16];
+    return;
+  }
+  if([self landscape] && right.count) { [_viewFlow addView:[self columns:@[left, right] gap:16] top:16]; }
+  else { for(UIView *card in [left arrayByAddingObjectsFromArray:right]) { [_viewFlow addView:card top:16]; } }
+}
+
+#pragma mark - Energy page (PVPC electricity price)
+
+- (void)renderEnergy {
+  GRTheme *t = [GRTheme current];
+  __weak GRMainViewController *weakSelf = self;
+  NSDictionary *sensor = [GRLogic pvpcSensor:self.model.entities];
+  NSDictionary *a = GRDict(sensor[@"attributes"]) ?: @{};
+  BOOL connected = self.model.connected;
+  NSArray *today = sensor ? [GRLogic pvpcPrices:sensor tomorrow:NO] : @[], *tomorrow = sensor ? [GRLogic pvpcPrices:sensor tomorrow:YES] : @[];
+  BOOL showTomorrow = _energyTomorrow && tomorrow.count == 24;
+  NSArray *prices = showTomorrow ? tomorrow : today;
+  NSNumber *current = sensor ? [GRLogic numericState:sensor connected:connected] : nil;
+  NSInteger hour = [[NSCalendar currentCalendar] component:NSCalendarUnitHour fromDate:[NSDate date]];
+  if(!current && today.count == 24 && GRNum(today[hour])) { current = today[hour]; }
+  NSString *level = current && today.count == 24 ? [GRLogic priceLevel:current.doubleValue prices:today] : nil;
+  NSDictionary *levelNames = @{@"low": @"Vall", @"normal": @"Normal", @"high": @"Alta"};
+  UIColor *(^levelColor)(NSString *) = ^UIColor *(NSString *l) { return [l isEqualToString:@"low"] ? t.good : ([l isEqualToString:@"high"] ? t.issue : t.accent); };
+
+  UILabel *title = [self pageTitle:@"Preu de la llum"];
+  NSString *summary = level ? [NSString stringWithFormat:@"Ara: hora %@", [levelNames[level] lowercaseString]] : @"";
+  UILabel *badge = GRLabel(summary, GRFont(15, UIFontWeightMedium), level ? levelColor(level) : t.muted);
+  badge.textAlignment = NSTextAlignmentCenter;
+  badge.layer.cornerRadius = GRRadius(18); badge.layer.borderWidth = summary.length ? 1 : 0; badge.layer.borderColor = (level ? levelColor(level) : t.edge).CGColor;
+  GRBlockView *header = [GRBlockView new];
+  [header addSubview:title]; [header addSubview:badge];
+  header.measure = ^CGFloat(CGFloat width) { return 52; };
+  header.layout = ^(UIView *view) {
+    CGFloat w = view.bounds.size.width, bw = summary.length ? ceil([badge sizeThatFits:CGSizeZero].width) + 32 : 0;
+    badge.frame = CGRectMake(w - bw, 8, bw, 36); title.frame = CGRectMake(0, 0, w - bw - 12, 52);
+  };
+  [_viewFlow addView:header top:0];
+  if(!sensor) {
+    [_viewFlow addView:[self note:@"Afegeix a entity_ids el sensor de la integració «Spain electricity hourly pricing (PVPC)» de Home Assistant (per exemple sensor.esios_pvpc). El panell en llegeix el preu de cada hora del dia i, a partir de les 20.30, el de l’endemà."] top:16];
+    return;
+  }
+
+  // The reading: the inspected hour or the current price, then the day's minimum, maximum and mean.
+  NSInteger inspected = _energyHour >= 0 && _energyHour < (NSInteger)prices.count && GRNum(prices[_energyHour]) ? _energyHour : -1;
+  NSNumber *shownPrice = inspected >= 0 ? prices[inspected] : (showTomorrow ? nil : current);
+  NSString *shownLevel = shownPrice && prices.count == 24 ? [GRLogic priceLevel:shownPrice.doubleValue prices:prices] : nil;
+  UILabel *value = GRLabel(shownPrice ? [GRLogic centsText:shownPrice.doubleValue] : @"—", GRDigits(72, UIFontWeightThin), shownLevel ? levelColor(shownLevel) : t.highlight);
+  GRGlow(value.layer, value.textColor, 12);
+  UILabel *unit = GRLabel(@"cèntims €/kWh", GRFont(15, UIFontWeightRegular), t.muted);
+  NSString *when = inspected >= 0 ? [NSString stringWithFormat:@"%@ de %@ a %@ h", showTomorrow ? @"Demà" : @"Avui", GRPad2(inspected), GRPad2((inspected + 1) % 24)]
+    : (showTomorrow ? @"Demà · toca una hora per veure’n el preu" : [NSString stringWithFormat:@"Ara, de %@ a %@ h", GRPad2(hour), GRPad2((hour + 1) % 24)]);
+  if(shownLevel) { when = [when stringByAppendingFormat:@" · %@", [levelNames[shownLevel] lowercaseString]]; }
+  UILabel *whenLabel = GRLabel(when, GRFont(16, UIFontWeightRegular), t.text);
+  double minimum = DBL_MAX, maximum = -DBL_MAX, total = 0; NSInteger count = 0, minHour = -1, maxHour = -1;
+  for(NSInteger i = 0; i < (NSInteger)prices.count; i++) {
+    NSNumber *price = GRNum(prices[i]);
+    if(!price) { continue; }
+    if(price.doubleValue < minimum) { minimum = price.doubleValue; minHour = i; }
+    if(price.doubleValue > maximum) { maximum = price.doubleValue; maxHour = i; }
+    total += price.doubleValue; count++;
+  }
+  NSMutableArray *statViews = [NSMutableArray array];
+  NSArray *stats = @[@[@"MÍNIM", count ? @(minimum) : [NSNull null], minHour >= 0 ? [NSString stringWithFormat:@"a les %@ h", GRPad2(minHour)] : @""],
+                     @[@"MÀXIM", count ? @(maximum) : [NSNull null], maxHour >= 0 ? [NSString stringWithFormat:@"a les %@ h", GRPad2(maxHour)] : @""],
+                     @[@"MITJANA", count ? @(total / count) : [NSNull null], @"del dia"]];
+  for(NSArray *stat in stats) {
+    UILabel *label = GRLabel(nil, GRFont(12, UIFontWeightMedium), t.section);
+    label.attributedText = GRKerned(stat[0], label.font, t.section, 1.2);
+    UILabel *number = GRLabel([stat[1] isKindOfClass:[NSNumber class]] ? [GRLogic centsText:[stat[1] doubleValue]] : @"—", GRDigits(28, UIFontWeightLight), t.text);
+    UILabel *detail = GRLabel(stat[2], GRFont(12, UIFontWeightRegular), t.muted);
+    [statViews addObject:@[label, number, detail]];
+  }
+  GRBlockView *readout = [GRBlockView new];
+  for(UIView *view in @[value, unit, whenLabel]) { [readout addSubview:view]; }
+  for(NSArray *views in statViews) { for(UIView *view in views) { [readout addSubview:view]; } }
+  readout.measure = ^CGFloat(CGFloat width) { return 112; };
+  readout.layout = ^(UIView *view) {
+    CGFloat w = view.bounds.size.width, x = w;
+    for(NSArray *views in [statViews reverseObjectEnumerator]) {
+      CGFloat cw = MAX(92, ceil([views[1] sizeThatFits:CGSizeZero].width));
+      x -= cw;
+      [views[0] setFrame:CGRectMake(x, 18, cw, 16)]; [views[1] setFrame:CGRectMake(x, 36, cw, 34)]; [views[2] setFrame:CGRectMake(x, 72, cw, 16)];
+      x -= 24;
+    }
+    CGFloat vw = ceil([value sizeThatFits:CGSizeZero].width);
+    value.frame = CGRectMake(0, 0, vw, 80);
+    unit.frame = CGRectMake(vw + 10, 46, MAX(0, x - vw - 20), 20);
+    whenLabel.frame = CGRectMake(2, 84, x - 10, 22);
+  };
+  [_viewFlow addView:readout top:16];
+
+  if(tomorrow.count == 24) {
+    GRWrapView *days = [GRWrapView new];
+    days.horizontalSpacing = 8;
+    for(NSArray *day in @[@[@NO, @"Avui"], @[@YES, @"Demà"]]) {
+      GRButton *button = [GRButton buttonWithTitle:day[1] style:GRButtonStylePeriod handler:^(GRButton *b) {
+        GRMainViewController *strongSelf = weakSelf;
+        if(!strongSelf) { return; }
+        strongSelf->_energyTomorrow = [day[0] boolValue]; strongSelf->_energyHour = -1; [strongSelf renderView];
+      }];
+      button.selectedLook = showTomorrow == [day[0] boolValue];
+      [days addSubview:button];
+    }
+    [_viewFlow addView:days top:14];
+  }
+
+  if(prices.count == 24) {
+    GRPriceChartView *chart = [GRPriceChartView new];
+    chart.prices = prices;
+    chart.currentHour = showTomorrow ? -1 : hour;
+    chart.selectedHour = inspected;
+    chart.onSelect = ^(NSInteger selected) {
+      GRMainViewController *strongSelf = weakSelf;
+      if(strongSelf) { strongSelf->_energyHour = selected; [strongSelf renderView]; }
+    };
+    GRBlockView *chartRow = [GRBlockView new];
+    [chartRow addSubview:chart];
+    chartRow.measure = ^CGFloat(CGFloat width) { return 300; };
+    chartRow.layout = ^(UIView *view) { chart.frame = view.bounds; [chart setNeedsDisplay]; };
+    [_viewFlow addView:chartRow top:14];
+    // Legend: the three levels and what they mean.
+    GRWrapView *legend = [GRWrapView new];
+    legend.horizontalSpacing = 22;
+    for(NSString *key in @[@"low", @"normal", @"high"]) {
+      UILabel *item = GRLabel([NSString stringWithFormat:@"■  %@", levelNames[key]], GRFont(14, UIFontWeightMedium), levelColor(key));
+      [legend addSubview:item];
+    }
+    [_viewFlow addView:legend top:8];
+    [_viewFlow addView:[self note:@"Vall: les 8 hores més barates del dia. Alta: les 8 més cares. Normal: la resta. Toca o arrossega sobre la gràfica per veure el preu de cada hora."] top:6];
+  } else {
+    [_viewFlow addView:[self note:@"Home Assistant encara no ha publicat els preus de cada hora d’aquest sensor."] top:16];
+  }
+
+  // Tariff period, the next cheaper hour and the cheapest hours left today.
+  GRFlowView *info = [self card:@"TARIFA" note:GRStr(a[@"tariff"]) ?: @""];
+  NSDictionary *periods = @{@"P1": @"Punta (P1)", @"P2": @"Pla (P2)", @"P3": @"Vall (P3)"};
+  NSString *period = GRStr(a[@"period"]);
+  if(period) { [info addView:[self infoRow:@"Període horari ara" value:periods[period] ?: period issue:NO] top:10]; }
+  NSString *next = GRStr(a[@"next_period"]);
+  NSNumber *hoursToNext = GRNum(a[@"hours_to_next_period"]);
+  if(next) { [info addView:[self infoRow:@"Període següent" value:[NSString stringWithFormat:@"%@%@", periods[next] ?: next, hoursToNext ? [NSString stringWithFormat:@" d’aquí a %@ h", GRFormatNumber(hoursToNext.doubleValue)] : @""] issue:NO] top:0]; }
+  NSNumber *better = GRNum(a[@"next_better_price"]), *hoursToBetter = GRNum(a[@"hours_to_better_price"]);
+  if(better) { [info addView:[self infoRow:@"Propera hora més barata" value:[NSString stringWithFormat:@"%@ c€%@", [GRLogic centsText:better.doubleValue], hoursToBetter ? [NSString stringWithFormat:@" d’aquí a %@ h", GRFormatNumber(hoursToBetter.doubleValue)] : @""] issue:NO] top:0]; }
+  if(today.count == 24 && !showTomorrow) {
+    NSMutableArray *left = [NSMutableArray array];
+    for(NSInteger i = hour; i < 24; i++) { if(GRNum(today[i])) { [left addObject:@[@(i), today[i]]]; } }
+    [left sortUsingComparator:^NSComparisonResult(NSArray *x, NSArray *y) { return [x[1] compare:y[1]]; }];
+    NSMutableArray *names = [NSMutableArray array];
+    for(NSArray *item in [left subarrayWithRange:NSMakeRange(0, MIN(3, left.count))]) {
+      [names addObject:[NSString stringWithFormat:@"%@ h (%@)", GRPad2([item[0] integerValue]), [GRLogic centsText:[item[1] doubleValue]]]];
+    }
+    if(names.count) { [info addView:[self infoRow:@"Hores més barates que queden" value:[names componentsJoinedByString:@", "] issue:NO] top:0]; }
+  }
+  if(info.subviews.count > 1) { [_viewFlow addView:info top:18]; }
+}
+
 #pragma mark Camera refresh
 
 // The badge says whether the image is live; with no image yet, the reason of the last failure is shown over it.
@@ -1427,7 +2105,7 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
   _modalFlow = [GRFlowView new];
   _modalFlow.insets = UIEdgeInsetsMake(0, 36, 36, 36);
   [_modalScroll addSubview:_modalFlow];
-  _serverField = nil; _tokenField = nil; _alarmField = nil;
+  [self clearAlarmCode]; _alarmDots = nil;
   if(changed) { _modalScroll.contentOffset = CGPointZero; }
   if(!wasOpen) {
     _modalLayer.hidden = NO;
@@ -1450,7 +2128,7 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
 - (void)closeModal {
   if(!_modal) { return; }
   [self.view endEditing:YES];
-  _alarmField.text = @"";
+  [self clearAlarmCode];
   _modal = nil; _modalDirty = NO;
   UIView *layer = _modalLayer;
   [UIView animateWithDuration:.2 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
@@ -1464,7 +2142,7 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
       [self->_modalScroll addSubview:self->_modalFlow];
     }
   }];
-  _serverField = nil; _tokenField = nil; _alarmField = nil;
+  _alarmDots = nil;
 }
 
 - (void)rebuildModal {
@@ -1473,7 +2151,6 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
   NSString *type = _modal[@"type"];
   if([type isEqualToString:@"category"]) { [self openCategory:_modal[@"id"] title:_modal[@"title"]]; }
   else if([type isEqualToString:@"room"]) { [self openRoom:_modal[@"id"]]; }
-  else if([type isEqualToString:@"settings"]) { [self openSettings]; }
   else if([type isEqualToString:@"audit"]) { [self showAudit]; }
   else if([type isEqualToString:@"alarm"]) { [self closeModal]; return; }
   [self layoutModal];
@@ -1482,15 +2159,16 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
 }
 
 - (BOOL)isEditingModal {
-  return _modalDirty || _serverField.isFirstResponder || _tokenField.isFirstResponder || _alarmField.isFirstResponder;
+  return _modalDirty || _alarmCode.length > 0;
 }
+
+- (BOOL)isEditingSettings { return _serverField.isFirstResponder || _tokenField.isFirstResponder || _lockField.isFirstResponder; }
 
 - (void)refreshModal {
   if(!_modal || self.model.busy) { return; }
   NSString *type = _modal[@"type"];
   if([self isEditingModal] && self.model.connected) { return; }
   if([type isEqualToString:@"alarm"]) { if(!self.model.connected) { [self closeModal]; } return; }
-  if([type isEqualToString:@"settings"] && [self isEditingModal]) { return; }
   if([type isEqualToString:@"audit"]) { return; }
   [self rebuildModal];
 }
@@ -1500,6 +2178,8 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
   if(!room) { return; }
   GRFlowView *parent = [self openModal:room[@"name"] eyebrow:@"ESTANÇA" type:@"room" modalId:roomId];
   NSArray *entities = [GRLogic entities:self.model.entities inRoom:roomId];
+  NSArray *roomLights = [GRLogic lights:entities];
+  if(roomLights.count > 1) { [self addLightGroup:roomLights to:parent title:@"TOTS ELS LLUMS DE L’ESTANÇA" top:4]; [parent addView:[GRRuleView ruleWithColor:[GRTheme current].line] top:22]; }
   if(entities.count) { [self addEntities:entities to:parent]; }
   else {
     [parent addView:GRWrappingLabel(@"Un espai per definir.", GRFont(24, UIFontWeightLight), [GRTheme current].text, 0) top:12];
@@ -1522,7 +2202,7 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
   GRTheme *t = [GRTheme current];
   GRFlowView *box = [GRFlowView new];
   box.insets = UIEdgeInsetsMake(16, 18, 16, 18);
-  box.layer.cornerRadius = 14; box.layer.borderWidth = 1; box.layer.borderColor = (color ?: t.edge).CGColor;
+  box.layer.cornerRadius = GRRadius(14); box.layer.borderWidth = 1; box.layer.borderColor = (color ?: t.edge).CGColor;
   [box addView:GRWrappingLabel(text, GRFont(14, UIFontWeightRegular), color ?: t.muted, 21)];
   return box;
 }
@@ -1633,7 +2313,31 @@ static BOOL GRIsActiveState(NSString *domain, NSString *state) {
     if([kind isEqualToString:@"alarm"] || [action hasPrefix:@"alarm_"]) { [weakSelf alarmPrompt:entity control:control]; }
     else { [weakSelf sendAction:entity control:control value:value code:nil]; }
   };
-  if([kind isEqualToString:@"range"]) {
+  NSInteger speeds = [action isEqualToString:@"set_percentage"] ? [GRNum(control[@"speeds"]) integerValue] : 0;
+  if(speeds >= 2 && speeds <= 10) {
+    // Fans with a fixed number of speeds (CREATE: 1 to 6) get one button per speed instead of a percentage slider.
+    *buttons = nil;
+    NSNumber *current = GRNum(control[@"value"]);
+    NSInteger speed = [GRStr(entity[@"state"]) isEqualToString:@"on"] && current ? [GRLogic fanSpeedForPercentage:current.doubleValue speeds:speeds] : 0;
+    [group addView:GRLabel(speed ? [NSString stringWithFormat:@"Velocitat · %ld de %ld", (long)speed, (long)speeds] : @"Velocitat", GRFont(13, UIFontWeightRegular), t.muted) top:14];
+    NSMutableArray *chips = [NSMutableArray array];
+    GRBlockView *row = [GRBlockView new];
+    for(NSInteger i = 1; i <= speeds; i++) {
+      NSInteger percentage = [GRLogic percentageForFanSpeed:i speeds:speeds];
+      GRButton *chip = [GRButton buttonWithTitle:[NSString stringWithFormat:@"%ld", (long)i] style:GRButtonStyleSegment handler:^(GRButton *b) { act(@(percentage)); }];
+      chip.fontSize = 20;
+      chip.selectedLook = i == speed;
+      chip.enabled = enabled;
+      chip.accessibilityLabel = [NSString stringWithFormat:@"Velocitat %ld", (long)i];
+      [row addSubview:chip]; [chips addObject:chip];
+    }
+    row.measure = ^CGFloat(CGFloat width) { return 52; };
+    row.layout = ^(UIView *view) {
+      CGFloat w = floor((view.bounds.size.width - 8 * (chips.count - 1)) / chips.count);
+      for(NSUInteger i = 0; i < chips.count; i++) { [chips[i] setFrame:CGRectMake(i * (w + 8), 0, w, 52)]; }
+    };
+    [group addView:row top:8];
+  } else if([kind isEqualToString:@"range"]) {
     *buttons = nil;
     NSNumber *minimum = GRNum(control[@"min"]) ?: @0, *maximum = GRNum(control[@"max"]) ?: @100, *current = GRNum(control[@"value"]);
     double step = GRNum(control[@"step"]).doubleValue > 0 ? GRNum(control[@"step"]).doubleValue : 1;
@@ -1657,6 +2361,7 @@ static BOOL GRIsActiveState(NSString *domain, NSString *state) {
       if([action isEqualToString:@"volume_set"]) { return [NSString stringWithFormat:@"%ld %%", GRRound(value * 100)]; }
       if([action isEqualToString:@"set_percentage"]) { return [NSString stringWithFormat:@"%@ %%", GRFormatNumber(value)]; }
       if([action isEqualToString:@"color_temp_kelvin"]) { return [NSString stringWithFormat:@"%@ K", GRFormatNumber(value)]; }
+      if([action isEqualToString:@"set_temperature"]) { return [NSString stringWithFormat:@"%@ °", GRFormatNumber(value)]; }
       return GRFormatNumber(value);
     };
     NSString *title = [[label stringByReplacingOccurrencesOfString:@" (K)" withString:@""] stringByReplacingOccurrencesOfString:@" (%)" withString:@""];
@@ -1719,25 +2424,70 @@ static BOOL GRIsActiveState(NSString *domain, NSString *state) {
 - (void)setModalDirtyFlag:(BOOL)dirty { _modalDirty = dirty; }
 - (BOOL)modalDirtyFlag { return _modalDirty; }
 
+- (void)clearAlarmCode {
+  [_alarmCode setString:@""];
+  [self updateAlarmDots];
+}
+
+- (void)updateAlarmDots {
+  if(!_alarmDots) { return; }
+  NSMutableArray *dots = [NSMutableArray array];
+  for(NSUInteger i = 0; i < _alarmCode.length; i++) { [dots addObject:@"●"]; }
+  _alarmDots.text = dots.count ? [dots componentsJoinedByString:@" "] : @"– – – –";
+  _alarmDots.textColor = dots.count ? [GRTheme current].highlight : [GRTheme current].faint;
+  _alarmDots.accessibilityLabel = [NSString stringWithFormat:@"PIN de l’alarma: %lu dígits", (unsigned long)_alarmCode.length];
+}
+
+// Numeric pad drawn by the app: the alarm code never opens the iOS keyboard.
+- (UIView *)alarmPinPad {
+  __weak GRMainViewController *weakSelf = self;
+  NSMutableArray *keys = [NSMutableArray array];
+  for(NSString *key in @[@"1", @"2", @"3", @"4", @"5", @"6", @"7", @"8", @"9", @"C", @"0", @"⌫"]) {
+    GRButton *button = [GRButton buttonWithTitle:key style:GRButtonStyleOutline handler:^(GRButton *b) {
+      GRMainViewController *strongSelf = weakSelf;
+      if(!strongSelf) { return; }
+      if([key isEqualToString:@"C"]) { [strongSelf->_alarmCode setString:@""]; }
+      else if([key isEqualToString:@"⌫"]) { if(strongSelf->_alarmCode.length) { [strongSelf->_alarmCode deleteCharactersInRange:NSMakeRange(strongSelf->_alarmCode.length - 1, 1)]; } }
+      else if(strongSelf->_alarmCode.length < 12) { [strongSelf->_alarmCode appendString:key]; }
+      [strongSelf updateAlarmDots];
+    }];
+    button.fontSize = [key isEqualToString:@"C"] ? 20 : 28;
+    button.accessibilityLabel = [key isEqualToString:@"C"] ? @"Esborra tot" : ([key isEqualToString:@"⌫"] ? @"Esborra l’últim dígit" : key);
+    [keys addObject:button];
+  }
+  GRBlockView *pad = [GRBlockView new];
+  for(UIView *key in keys) { [pad addSubview:key]; }
+  pad.measure = ^CGFloat(CGFloat width) { return 4 * 68 + 3 * 10; };
+  pad.layout = ^(UIView *view) {
+    CGFloat total = MIN(view.bounds.size.width, 360), x0 = (view.bounds.size.width - total) / 2;
+    CGFloat w = floor((total - 20) / 3);
+    for(NSUInteger i = 0; i < keys.count; i++) { [keys[i] setFrame:CGRectMake(x0 + (i % 3) * (w + 10), (i / 3) * 78, w, 68)]; }
+  };
+  return pad;
+}
+
 - (void)alarmPrompt:(NSDictionary *)entity control:(NSDictionary *)control {
   GRTheme *t = [GRTheme current];
   GRFlowView *parent = [self openModal:GRStr(control[@"label"]) ?: @"Alarma" eyebrow:@"SEGURETAT" type:@"alarm" modalId:entity[@"entity_id"]];
   [parent addView:[self infoBox:[NSString stringWithFormat:@"Estat actual: %@. Confirma l’ordre abans d’enviar-la.", [GRLogic stateTextForEntity:entity connected:self.model.connected demo:self.model.demo]] color:nil] top:8];
-  if([control[@"requires_code"] isEqual:@YES]) {
+  BOOL needsCode = [control[@"requires_code"] isEqual:@YES];
+  if(needsCode) {
     [parent addView:GRLabel(@"PIN de l’alarma", GRFont(13, UIFontWeightRegular), t.muted) top:18];
-    _alarmField = [self textField:nil placeholder:nil secure:YES];
-    _alarmField.keyboardType = UIKeyboardTypeNumberPad;
-    _alarmField.accessibilityLabel = @"PIN de l’alarma";
-    [parent addView:_alarmField top:8 height:50];
-    [parent addView:[self note:@"El PIN només s’envia amb aquesta ordre i s’esborra del camp immediatament."] top:8];
+    _alarmDots = GRLabel(nil, GRDigits(30, UIFontWeightLight), t.highlight);
+    _alarmDots.textAlignment = NSTextAlignmentCenter;
+    _alarmDots.isAccessibilityElement = YES;
+    [self updateAlarmDots];
+    [parent addView:_alarmDots top:6 height:44];
+    [parent addView:[self alarmPinPad] top:10];
+    [parent addView:[self note:@"El PIN només s’envia amb aquesta ordre i s’esborra immediatament."] top:12];
   }
   __weak GRMainViewController *weakSelf = self;
   GRButton *submit = [GRButton buttonWithTitle:GRStr(control[@"label"]) style:GRButtonStylePrimary handler:^(GRButton *b) {
     GRMainViewController *strongSelf = weakSelf;
     if(!strongSelf) { return; }
-    UITextField *field = strongSelf->_alarmField;
-    NSString *code = field ? [field.text copy] : nil;
-    field.text = @"";
+    NSString *code = needsCode ? [strongSelf->_alarmCode copy] : nil;
+    [strongSelf clearAlarmCode];
+    if(needsCode && !code.length) { [strongSelf toast:@"Escriu el PIN de l’alarma amb el teclat."]; return; }
     [strongSelf sendAction:entity control:control value:nil code:code];
   }];
   [parent addView:submit top:22];
@@ -1779,7 +2529,7 @@ static BOOL GRIsActiveState(NSString *domain, NSString *state) {
   field.textColor = t.text;
   field.tintColor = t.accent;
   field.backgroundColor = t.field;
-  field.layer.cornerRadius = 12; field.layer.borderWidth = 1; field.layer.borderColor = t.edge.CGColor;
+  field.layer.cornerRadius = GRRadius(12); field.layer.borderWidth = 1; field.layer.borderColor = t.edge.CGColor;
   field.leftView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 14, 10)]; field.leftViewMode = UITextFieldViewModeAlways;
   field.autocapitalizationType = UITextAutocapitalizationTypeNone;
   field.autocorrectionType = UITextAutocorrectionTypeNo;
@@ -1792,16 +2542,12 @@ static BOOL GRIsActiveState(NSString *domain, NSString *state) {
 
 - (BOOL)textFieldShouldReturn:(UITextField *)textField {
   if(textField == _serverField) { [_tokenField becomeFirstResponder]; }
+  else if(textField == _lockField) { [self saveScreenLock]; }
   else { [textField resignFirstResponder]; }
   return NO;
 }
 
-- (GRFlowView *)settingsSection:(NSString *)title {
-  GRFlowView *section = [GRFlowView new];
-  section.insets = UIEdgeInsetsMake(22, 0, 24, 0);
-  [section addView:[self sectionLabel:title.uppercaseString] top:0];
-  return section;
-}
+- (GRFlowView *)settingsSection:(NSString *)title { return [self card:title.uppercaseString note:@""]; }
 
 - (UIView *)switchRow:(NSString *)text on:(BOOL)on changed:(void (^)(BOOL on))changed {
   UISwitch *toggle = [UISwitch new];
@@ -1882,61 +2628,104 @@ static BOOL GRIsActiveState(NSString *domain, NSString *state) {
   return section;
 }
 
-- (void)openSettings {
+- (void)openSettings { [self navigate:@"settings"]; }
+
+// Equal-width choice buttons in rows; choices are @[value, title].
+- (GRBlockView *)choices:(NSArray<NSArray *> *)choices selected:(id)selected columns:(NSUInteger)columns action:(void (^)(id value))action {
+  NSMutableArray *buttons = [NSMutableArray array];
+  GRBlockView *grid = [GRBlockView new];
+  for(NSArray *choice in choices) {
+    id value = choice[0];
+    GRButton *button = [GRButton buttonWithTitle:choice[1] style:GRButtonStyleSegment handler:^(GRButton *b) { action(value); }];
+    button.selectedLook = [value isEqual:selected];
+    button.accessibilityTraits = UIAccessibilityTraitButton | (button.selectedLook ? UIAccessibilityTraitSelected : 0);
+    [grid addSubview:button]; [buttons addObject:button];
+  }
+  NSUInteger rows = (buttons.count + columns - 1) / columns;
+  grid.measure = ^CGFloat(CGFloat width) { return rows * 46 + (rows - 1) * 8; };
+  grid.layout = ^(UIView *view) {
+    CGFloat w = (view.bounds.size.width - 8 * (columns - 1)) / columns;
+    for(NSUInteger i = 0; i < buttons.count; i++) { [buttons[i] setFrame:CGRectMake((i % columns) * (w + 8), (i / columns) * 54, w, 46)]; }
+  };
+  return grid;
+}
+
+- (UILabel *)pageTitle:(NSString *)text {
+  GRTheme *t = [GRTheme current];
+  UILabel *title = GRLabel(nil, GRFont(40, UIFontWeightThin), t.highlight);
+  title.attributedText = GRKerned(text, title.font, t.highlight, -1);
+  title.accessibilityTraits = UIAccessibilityTraitHeader;
+  GRGlow(title.layer, t.highlight, 12);
+  return title;
+}
+
+- (void)renderSettings {
   GRTheme *t = [GRTheme current];
   GRPreferences *preferences = [GRPreferences shared];
-  GRFlowView *parent = [self openModal:@"Ajustos" eyebrow:@"PREFERÈNCIES" type:@"settings" modalId:@"settings"];
   __weak GRMainViewController *weakSelf = self;
+  [_viewFlow addView:[self pageTitle:@"Ajustos"] top:0 height:52];
   BOOL needsSetup = _configurationMessage.length && !self.model.authenticated && !self.model.preview;
-  if(needsSetup) {
-    // The connection fields come first until the app can reach the panel.
-    [parent addView:[self infoBox:_configurationMessage color:t.issue] top:4];
-    [parent addView:[self connectionSection] top:0];
-    [parent addView:[GRRuleView ruleWithColor:t.line] top:0];
-  }
-  GRFlowView *section = [self settingsSection:@"Tema"];
-  NSMutableArray *segments = [NSMutableArray array];
-  GRBlockView *segmentRow = [GRBlockView new];
-  for(NSArray *choice in @[@[@"auto", @"Automàtic"], @[@"day", @"Dia"], @[@"night", @"Nit"]]) {
-    GRButton *button = [GRButton buttonWithTitle:choice[1] style:GRButtonStyleSegment handler:^(GRButton *b) { [weakSelf setThemeChoice:choice[0]]; [weakSelf openSettings]; }];
-    button.selectedLook = [preferences.theme isEqualToString:choice[0]];
-    button.accessibilityTraits = UIAccessibilityTraitButton | (button.selectedLook ? UIAccessibilityTraitSelected : 0);
-    [segmentRow addSubview:button]; [segments addObject:button];
-  }
-  segmentRow.measure = ^CGFloat(CGFloat width) { return 46; };
-  segmentRow.layout = ^(UIView *view) {
-    CGFloat w = (view.bounds.size.width - 16) / 3;
-    for(NSUInteger i = 0; i < segments.count; i++) { [segments[i] setFrame:CGRectMake(i * (w + 8), 0, w, 46)]; }
-  };
-  [section addView:segmentRow top:14];
-  [section addView:[self note:@"Automàtic: dia de 7 a 20 h, segons el rellotge de l’iPad."] top:10];
-  [parent addView:section top:0];
-  [parent addView:[GRRuleView ruleWithColor:t.line] top:0];
+  if(needsSetup) { [_viewFlow addView:[self infoBox:_configurationMessage color:t.issue] top:12]; }
 
-  section = [self settingsSection:@"Bloqueig de la pantalla"];
-  NSMutableArray *locks = [NSMutableArray array];
-  GRBlockView *lockGrid = [GRBlockView new];
-  for(NSArray *choice in @[@[@0, @"Com iOS"], @[@300, @"5 min"], @[@900, @"15 min"], @[@1800, @"30 min"], @[@3600, @"1 h"], @[@-1, @"Mai"]]) {
-    GRButton *button = [GRButton buttonWithTitle:choice[1] style:GRButtonStyleSegment handler:^(GRButton *b) {
-      [GRPreferences shared].screenLock = [choice[0] integerValue]; [GRScreenLock restart]; [weakSelf openSettings];
-    }];
-    button.selectedLook = preferences.screenLock == [choice[0] integerValue];
-    button.accessibilityTraits = UIAccessibilityTraitButton | (button.selectedLook ? UIAccessibilityTraitSelected : 0);
-    [lockGrid addSubview:button]; [locks addObject:button];
-  }
-  lockGrid.measure = ^CGFloat(CGFloat width) { return 46 * 2 + 8; };
-  lockGrid.layout = ^(UIView *view) {
-    CGFloat w = (view.bounds.size.width - 16) / 3;
-    for(NSUInteger i = 0; i < locks.count; i++) { [locks[i] setFrame:CGRectMake((i % 3) * (w + 8), (i / 3) * 54, w, 46)]; }
-  };
-  [section addView:lockGrid top:14];
-  [section addView:[self note:@"Temps sense tocar la pantalla abans que l’iPad s’apagui. Un cop passat, s’apaga amb el bloqueig automàtic d’iOS (Configuració → Pantalla i brillantor), que s’hi suma: posa’l a 2 minuts. «Mai» la manté encesa; útil si l’iPad és a la paret amb el carregador."] top:10];
-  [parent addView:section top:0];
-  [parent addView:[GRRuleView ruleWithColor:t.line] top:0];
+  GRFlowView *look = [self settingsSection:@"Aparença"];
+  [look addView:GRLabel(@"Estil", GRFont(13, UIFontWeightRegular), t.text) top:16];
+  [look addView:[self choices:@[@[@"warm", @"Nit càlida"], @[@"jarvis", @"Jarvis"]] selected:preferences.style columns:2 action:^(id value) {
+    [weakSelf setStyleChoice:value]; [weakSelf renderView];
+  }] top:8];
+  [look addView:GRLabel(@"Tema", GRFont(13, UIFontWeightRegular), t.text) top:16];
+  [look addView:[self choices:@[@[@"auto", @"Automàtic"], @[@"day", @"Dia"], @[@"night", @"Nit"]] selected:preferences.theme columns:3 action:^(id value) {
+    [weakSelf setThemeChoice:value]; [weakSelf renderView];
+  }] top:8];
+  [look addView:[self note:@"Nit càlida: negre i ambre. Jarvis: una pantalla de dades blau cian, com la d’Iron Man. Els dos estils tenen versió de dia i de nit; en automàtic, és de dia de 7 a 20 h."] top:12];
 
-  if(!needsSetup) { [parent addView:[self connectionSection] top:0]; }
-  [parent addView:[self note:[NSString stringWithFormat:@"Glass Rooms %@ · App nativa per a iPad · Actualitzacions en directe de Home Assistant.", GRVersion]] top:18];
-  [self finishModal];
+  NSInteger lock = preferences.screenLock;
+  GRFlowView *screen = [self settingsSection:@"Pantalla"];
+  NSArray *presets = @[@[@0, @"Com iOS"], @[@15, @"15 s"], @[@30, @"30 s"], @[@60, @"1 min"], @[@300, @"5 min"], @[@900, @"15 min"], @[@3600, @"1 h"], @[@-1, @"Mai"]];
+  [screen addView:GRLabel(@"Temps sense tocar-la abans d’apagar-se", GRFont(13, UIFontWeightRegular), t.text) top:16];
+  [screen addView:[self choices:presets selected:@(lock) columns:4 action:^(id value) {
+    [GRPreferences shared].screenLock = [value integerValue]; [GRScreenLock restart]; [weakSelf renderView];
+  }] top:8];
+  [screen addView:GRLabel(@"O escriu els segons que vulguis (de 5 a 86 400)", GRFont(13, UIFontWeightRegular), t.text) top:16];
+  _lockField = [self textField:lock > 0 ? [NSString stringWithFormat:@"%ld", (long)lock] : nil placeholder:@"Segons" secure:NO];
+  _lockField.keyboardType = UIKeyboardTypeNumberPad;
+  _lockField.returnKeyType = UIReturnKeyDone;
+  _lockField.accessibilityLabel = @"Segons sense tocar la pantalla";
+  UITextField *lockField = _lockField;
+  GRButton *saveLock = [GRButton buttonWithTitle:@"Desa" style:GRButtonStyleAction handler:^(GRButton *b) { [weakSelf saveScreenLock]; }];
+  GRBlockView *lockRow = [GRBlockView new];
+  [lockRow addSubview:lockField]; [lockRow addSubview:saveLock];
+  lockRow.measure = ^CGFloat(CGFloat width) { return 50; };
+  lockRow.layout = ^(UIView *view) {
+    CGFloat w = view.bounds.size.width;
+    lockField.frame = CGRectMake(0, 0, w - 110, 50); saveLock.frame = CGRectMake(w - 100, 0, 100, 50);
+  };
+  [screen addView:lockRow top:8];
+  NSString *now = lock == 0 ? @"Ara: la pantalla s’apaga amb el bloqueig automàtic d’iOS." : (lock < 0 ? @"Ara: la pantalla no s’apaga mai."
+    : [NSString stringWithFormat:@"Ara: la pantalla s’apaga després de %@ sense tocar-la.", GRDuration(lock)]);
+  [screen addView:GRWrappingLabel(now, GRFont(15, UIFontWeightRegular), t.highlight, 21) top:12];
+  [screen addView:[self switchRow:@"Apaga-la del tot en passar el temps (negre i brillantor mínima)" on:preferences.screenDim changed:^(BOOL on) {
+    [GRPreferences shared].screenDim = on; [GRScreenLock restart];
+  }] top:10];
+  [screen addView:[self note:@"Una app no pot bloquejar l’iPad: quan passa el temps, l’app apaga la pantalla (tota negra i amb la brillantor al mínim) i després el bloqueig automàtic d’iOS (Configuració → Pantalla i brillantor) la bloqueja. Tocar la pantalla negra només l’encén; no prem cap botó. Si desactives l’opció, només es deixa fer a iOS."] top:10];
+
+  GRFlowView *connection = [self connectionSection];
+  NSArray *left = needsSetup ? @[connection] : @[look, screen];
+  NSArray *right = needsSetup ? @[look, screen] : @[connection];
+  if([self landscape]) { [_viewFlow addView:[self columns:@[left, right] gap:16] top:16]; }
+  else { for(UIView *card in [left arrayByAddingObjectsFromArray:right]) { [_viewFlow addView:card top:16]; } }
+  [_viewFlow addView:[self note:[NSString stringWithFormat:@"Glass Rooms %@ · App nativa per a iPad · Actualitzacions en directe de Home Assistant.", GRVersion]] top:18];
+}
+
+- (void)saveScreenLock {
+  NSString *text = [_lockField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] ?: @"";
+  NSRegularExpression *digits = [NSRegularExpression regularExpressionWithPattern:@"^[0-9]{1,5}$" options:0 error:NULL];
+  NSInteger seconds = [digits firstMatchInString:text options:0 range:NSMakeRange(0, text.length)] ? text.integerValue : 0;
+  if(seconds < 5 || seconds > 86400) { [self toast:@"Escriu un nombre de segons entre 5 i 86 400 (24 hores)."]; return; }
+  [GRPreferences shared].screenLock = seconds;
+  [GRScreenLock restart];
+  [self.view endEditing:YES];
+  [self toast:[NSString stringWithFormat:@"La pantalla s’apagarà després de %@ sense tocar-la.", GRDuration(seconds)]];
+  [self renderView];
 }
 
 - (void)saveConnection {
@@ -1975,7 +2764,7 @@ static BOOL GRIsActiveState(NSString *domain, NSString *state) {
   output.editable = NO;
   output.font = [UIFont fontWithName:@"Menlo" size:11] ?: GRFont(11, UIFontWeightRegular);
   output.textColor = t.text; output.backgroundColor = t.background;
-  output.layer.cornerRadius = 12; output.layer.borderWidth = 1; output.layer.borderColor = t.edge.CGColor;
+  output.layer.cornerRadius = GRRadius(12); output.layer.borderWidth = 1; output.layer.borderColor = t.edge.CGColor;
   output.textContainerInset = UIEdgeInsetsMake(12, 8, 12, 8);
   output.text = reopening && _auditText ? _auditText : @"Carregant…";
   [parent addView:output top:14 height:420];
@@ -1998,14 +2787,16 @@ static BOOL GRIsActiveState(NSString *domain, NSString *state) {
   _keyboardHeight = MAX(0, self.view.bounds.size.height - frame.origin.y);
   [self layoutModal];
   [self layoutToast];
-  UIView *field = _serverField.isFirstResponder ? _serverField : (_tokenField.isFirstResponder ? _tokenField : (_alarmField.isFirstResponder ? _alarmField : nil));
-  if(field) { [_modalScroll scrollRectToVisible:[_modalScroll convertRect:CGRectInset(field.bounds, 0, -20) fromView:field] animated:YES]; }
+  UIView *field = _serverField.isFirstResponder ? _serverField : (_tokenField.isFirstResponder ? _tokenField : (_lockField.isFirstResponder ? _lockField : nil));
+  [self.view setNeedsLayout]; [self.view layoutIfNeeded];
+  if(field && [field isDescendantOfView:_scroll]) { [_scroll scrollRectToVisible:[_scroll convertRect:CGRectInset(field.bounds, 0, -20) fromView:field] animated:YES]; }
 }
 
 - (void)keyboardWillHide:(NSNotification *)notification {
   _keyboardHeight = 0;
   [self layoutModal];
   [self layoutToast];
+  [self.view setNeedsLayout];
 }
 
 @end

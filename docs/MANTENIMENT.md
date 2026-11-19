@@ -9,24 +9,24 @@
 | No arrenca | Completa `panel_pin` privat de 6–8 dígits, hosts i xarxes; revisa parelles d'accions, assignacions, polítiques Alarmo i fitxers TLS. Un error d'opcions es mostra sense el contingut secret. |
 | Host no autoritzat | L'adreça i el port de la URL han de coincidir amb `allowed_hosts`. La URL de Core `:8080` no és la del panell `:8099`. |
 | Xarxa no autoritzada | Revisa la màscara real i la IP del client; no afegeixis una xarxa pública o totes les adreces. El servidor ignora `X-Forwarded-For`. |
-| No hi ha connexió amb Core | Comprova Core i Supervisor, `homeassistant_api: true`, reinicia l'app. No afegeixis un token al navegador. |
-| Login o ordre denegats | Obre el panell directament, sense iframe/proxy; comprova cookie, origen i sessió. Torna a entrar després de reiniciar o canviar de IP. |
-| Massa intents | Espera que acabi el límit temporal; no automatitzis reintents de login. |
+| No hi ha connexió amb Core | Comprova Core i Supervisor, `homeassistant_api: true`, reinicia l'app de Home Assistant. |
+| «PIN o token de l'app incorrecte» | El PIN d'Ajustos de l'app ha de coincidir amb `panel_pin`. |
+| Massa intents | Espera un minut: el servidor limita els PINs erronis a 5 per minut i IP. |
+| «Recurs no trobat» al navegador | Des de 1.2.0 no hi ha panell web; fes servir l'app per a iPad. |
 | Control absent o bloquejat | Revisa entitat disponible, atributs actuals, servei i camps, `verified_actions`; per Alarmo també modes i política de codi. No forcis la UI. |
 | Ordre enviada però sense canvi | El retorn del servei no prova l'èxit físic. Comprova la integració i el dispositiu a Core abans de repetir l'ordre. |
 | Entitat absent / unknown / unavailable | Compara l'ID exacte i l'estat a Core; una baixa o canvi de nom no és un estat apagat. |
-| Safari no carrega | Revisa URL, xarxa, confiança del certificat, TLS i JavaScript habilitat. La validació ES5 no resol problemes de TLS. |
-| Navegació lenta | Desactiva vidre suau, tanca altres pestanyes i prova una sessió llarga. Registra la limitació real a VALIDACIO.md. |
-| Preferències no persisteixen | `localStorage` pot estar restringit; el panell funciona igual amb aparença predeterminada. |
+| L'app no connecta | Revisa l'adreça (amb `http://` o `https://` i el port), la xarxa, el certificat (Ajustos mostra l'empremta si iOS no hi confia) i `allowed_hosts`. |
+| L'app va lenta amb l'estil Jarvis | Les ombres de resplendor costen més a l'iPad mini 1; torna a l'estil Nit càlida a Ajustos i registra-ho a VALIDACIO.md. |
 
 ## Actualització
 
 1. Desactiva temporalment les accions posant `verified_actions: []` i reinicia l'app. Desa privadament les opcions anteriors; no les afegeixis al codi.
 2. Fes una còpia de seguretat completa i una còpia separada del directori font anterior. Si hi ha TLS, conserva'n les claus privadament. Anota la versió anterior.
-3. Comprova el codi nou a l'ordinador amb `python3 -m unittest discover -s tests -v`, `node scripts/check-es5.cjs` i el servidor `--preview`. Node només és una eina de comprovació, no un requisit del panell.
+3. Comprova el codi nou a l'ordinador amb `python3 -m unittest discover -s tests -v` (inclou les proves de l'app si hi ha `clang` de macOS) i el servidor `--preview`.
 4. Atura Glass Rooms. Substitueix els fitxers de la seva carpeta local pel nou paquet verificat. Conserva la mateixa `slug`; incrementa la versió de `config.yaml` si publiques una revisió pròpia.
 5. Actualitza la botiga local i aplica l'actualització. Si treballes amb la mateixa versió i la interfície ho ofereix, utilitza **Reconstrueix**; si no, publica una versió nova. No pressuposis que reiniciar reconstrueix la imatge.
-6. Inicia, comprova lectura, torna a validar les accions afectades i habilita-les una a una. Recarrega Safari: no hi ha service worker ni cache d'aplicació que calgui esborrar.
+6. Inicia, comprova lectura des de l'app, torna a validar les accions afectades i habilita-les una a una. Si l'app també ha canviat, instal·la la IPA nova.
 
 Els tags de la imatge base poden rebre actualitzacions. Per a una instal·lació reproduïble, conserva la còpia de seguretat de l'app abans de reconstruir i registra el digest de la imatge utilitzada. Aquesta entrega no afirma haver construït el contenidor a Home Assistant OS.
 
@@ -38,14 +38,14 @@ Restaurar el codi no desfà ordres ja executades als dispositius. Si una escena 
 
 ## Retirada
 
-1. Posa `verified_actions: []`, reinicia i tanca la sessió dels navegadors.
-2. Atura Glass Rooms, desactiva l'inici automàtic i desinstal·la l'app des de Home Assistant. Això atura el port i elimina les sessions en memòria.
+1. Posa `verified_actions: []` i reinicia.
+2. Atura Glass Rooms, desactiva l'inici automàtic i desinstal·la l'app des de Home Assistant. Això atura el port.
 3. Retira la carpeta font local quan hagis conservat allò necessari per a una reversió. Revisa les còpies que continguin opcions privades i elimina-les segons la teva política de còpies.
 4. Elimina del router o tallafoc qualsevol regla específica que haguessis afegit. No hi hauria d'haver ports WAN. Si havies instal·lat un certificat o clau exclusius d'aquest panell, retira'ls només després de comprovar que no els usa cap altre servei.
-5. A l'iPad, elimina l'accés directe i les dades d'aquest origen. Si el navegador havia desat la contrasenya antiga del panell, elimina aquesta entrada.
+5. A l'iPad, esborra l'app Glass Rooms; això n'elimina les preferències i el PIN desat.
 
 No cal eliminar cap entitat, grup, escena o automatització de Home Assistant: Glass Rooms no en crea ni en reconfigura. No deixa tokens de llarga durada de l'usuari per revocar.
 
 ## Servidor de proves d'aquest PC
 
-La previsualització escolta només a `127.0.0.1:8099`. Atura-la amb **Ctrl+C** al terminal on s'executa. Per tornar-la a obrir, executa `python3 glass_rooms/server.py --preview --port 8099` des del projecte. No utilitzis `--preview` com a desplegament real: no llegeix Home Assistant i rebutja totes les ordres.
+La previsualització és una API de només lectura que escolta només a `127.0.0.1:8099`, útil per a la previsualització Mac de l'app. Atura-la amb **Ctrl+C** al terminal on s'executa. Per tornar-la a obrir, executa `python3 glass_rooms/server.py --preview --port 8099` des del projecte. No utilitzis `--preview` com a desplegament real: no llegeix Home Assistant i rebutja totes les ordres.

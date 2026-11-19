@@ -9,8 +9,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) NSString *token;
 @property (nonatomic, copy, nullable) NSString *pinnedFingerprint;
 @property (nonatomic, copy) NSString *theme; // auto, day or night
-// Seconds without a touch before the app lets iOS lock the screen; 0 leaves it to iOS, -1 never.
+@property (nonatomic, copy) NSString *style; // warm (Nit càlida) or jarvis
+// Seconds without a touch before the screen turns off (5 s to 24 h); 0 leaves it to iOS, -1 never.
 @property (nonatomic) NSInteger screenLock;
+// When the time passes: YES blacks the screen out at minimum brightness right away; NO only hands over to iOS.
+@property (nonatomic) BOOL screenDim;
 @property (nonatomic, readonly) BOOL tokenInKeychain;
 @end
 

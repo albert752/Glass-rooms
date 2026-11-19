@@ -22,11 +22,12 @@ La suite utilitza objectes de Home Assistant simulats **només dins dels tests**
 
 ## Reproducció
 
+Des de 1.2.0 no hi ha panell web ni comprovador ES5; la suite inclou les proves de l'app per a iPad quan hi ha `clang` de macOS.
+
 Des de l'arrel del projecte:
 
 ```sh
 python3 -m unittest discover -s tests -v
-node scripts/check-es5.cjs
 python3 glass_rooms/server.py --preview --port 8099
 ```
 
@@ -154,3 +155,21 @@ No comprovat: la càmera real (`camera.cam_pt2_mainstream`) a través de Supervi
 | Previsualització Mac Catalyst a 1024×768 amb un Home Assistant simulat | Tira d'escenes a Estances; calaix del menjador amb els botons de l'emissor; selector de bloqueig a Ajustos |
 
 No comprovat: les ordres reals de LocalTuya ni el bloqueig de la pantalla a l'iPad real (la previsualització Mac no s'apaga).
+
+## Revisió 1.2.0 — només API, estil Jarvis, aparells i preu de la llum
+
+Data: **19 de novembre de 2026**. Entorn: macOS amb Python 3.11 i Command Line Tools.
+
+| Comprovació executada | Resultat |
+|---|---|
+| `python3 -m unittest discover -s tests` | **52 proves superades** (servidor i app nativa) |
+| Servidor només API | Sense fitxers web ni `/api/login`; cookie i CSRF no són credencials; tota l'API (excepte `/api/session`) exigeix Bearer; límit de 5 PINs erronis per minut |
+| Escalfador | Controls de temperatura objectiu, encesa i mode absència segons `supported_features`; atributs addicionals filtrats (sense token, adreça MAC ni URL) |
+| Ventiladors | Velocitats deduïdes de `percentage_step` o de `fan_speeds`; `fan_speeds` invàlid rebutja l'arrencada |
+| Llums en lot | Brillantor i temperatura de color en una sola petició; cada llum rep el Kelvin més proper que admet; valors fora de límits rebutjats |
+| PVPC i temps | Preus horaris i resum del sensor PVPC (categoria `energy`); temperatura i humitat de `weather.*` |
+| Proves natives (`ios/scripts/test.sh`) | **62 comprovacions**, 0 errors: velocitats 1–6 ↔ percentatge, nivells vall/normal/alta, cèntims, línia del temps de Barcelona |
+| Compilació iOS 9 (`ios/scripts/build.sh`) | Correcta amb `-Werror` per a armv7 i arm64 |
+| Captures Mac Catalyst 1024×768 | Estances, clima, aparells, preu de la llum, ajustos, calaix d'estança i teclat de l'alarma, en Nit càlida i Jarvis, de dia i de nit, contra el servidor real amb un Home Assistant simulat |
+
+No comprovat: l'iPad real (apagat de la pantalla, brillantor, tipografia i rendiment de l'estil Jarvis a l'A5) ni les entitats reals de casa (escalfador, ventiladors CREATE, comandaments, PVPC i temps).
