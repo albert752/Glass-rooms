@@ -238,6 +238,8 @@ static double GRNiceStep(double raw) {
   UIBezierPath *dot = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(previous.x - 3.5, previous.y - 3.5, 7, 7)];
   [color setFill]; [dot fill];
   CGContextRestoreGState(context);
+  // In the small portrait curves the latest value would cover the maximum and minimum labels.
+  if(size.height < 56) { return; }
   NSDictionary *strong = @{NSFontAttributeName: GRDigits(11, UIFontWeightMedium), NSForegroundColorAttributeName: color};
   NSString *now = [self text:_last];
   CGSize nowSize = [now sizeWithAttributes:strong];

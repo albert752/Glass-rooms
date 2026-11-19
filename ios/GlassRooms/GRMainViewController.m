@@ -213,6 +213,13 @@ static const CGFloat GRNavSize = 52, GRNavGap = 8;
 }
 @end
 
+// "51°", "51,5°": one decimal only when there is one.
+static NSString *GRDegrees(double value) {
+  NSString *text = [GRLogic shortNumber:value];
+  if([text hasSuffix:@",0"]) { text = [text substringToIndex:text.length - 2]; }
+  return [text stringByAppendingString:@"°"];
+}
+
 // Thermostat dial: a 270° ring from the minimum to the maximum temperature, open at the bottom. The arc up to
 // the target is lit, a dot marks the current water temperature and the target is written in the middle.
 // Dragging along the ring (or VoiceOver's adjust gesture) changes the target.
@@ -251,7 +258,7 @@ static const double GRDialStart = M_PI * 3 / 4, GRDialSweep = M_PI * 3 / 2;
   CGPoint c = [self middle];
   return CGPointMake(c.x + cos(angle) * radius, c.y + sin(angle) * radius);
 }
-- (NSString *)text:(double)value { return [[[GRLogic shortNumber:value] stringByReplacingOccurrencesOfString:@",0" withString:@""] stringByAppendingString:@"°"]; }
+- (NSString *)text:(double)value { return GRDegrees(value); }
 
 - (void)setTarget:(double)target { _target = target; self.accessibilityValue = [NSString stringWithFormat:@"%@ %@", [GRLogic shortNumber:target], self.unit ?: @""]; [self setNeedsDisplay]; }
 
@@ -405,6 +412,8 @@ static UIView *GRDot(BOOL lit) {
   NSInteger _currentPage;
   NSUInteger _renderCount;
   BOOL _pendingRender, _holdRender;
+  // While a device's controls are built, the reasons they are blocked are collected here and shown once.
+  NSMutableOrderedSet<NSString *> *_controlReasons;
   GRFlowView *_viewFlow;
   NSString *_currentView;
   // Climate page: chosen sensor and the inspected point (-1 = latest).
@@ -669,6 +678,8 @@ static UIView *GRDot(BOOL lit) {
 
 // Space between the fixed page header and the content of the second and later pages.
 static const CGFloat GRPageGap = 16;
+// A long card is split to fill the end of a page only when at least this much space is left.
+static const CGFloat GRSplitMinimum = 180;
 
 // Lays the collected items out in pages as tall as the content area: the first item stays fixed on top as the
 // page header, the rest fill page after page. Two-column blocks are filled column by column, and a card that
@@ -734,9 +745,10 @@ static const CGFloat GRPageGap = 16;
             CGFloat top = cy > start ? gap : 0;
             CGFloat h = [self fittingHeight:card width:cw];
             if(cy + top + h > H) {
-              // Only split a card that cannot fit even at the top of an empty column.
-              if(cy > start || !(fresh || start == 0) || ![card isKindOfClass:[GRFlowView class]]) { break; }
-              NSArray *pieces = [card splitForWidth:cw first:H - start rest:H - GRPageGap];
+              // Split a card that cannot fit even at the top of an empty column, or a long one when enough space is left.
+              BOOL roomy = [card isKindOfClass:[GRFlowView class]] && card.fillsPages && H - cy - top >= GRSplitMinimum && h > H * .5;
+              if(![card isKindOfClass:[GRFlowView class]] || (!roomy && (cy > start || !(fresh || start == 0)))) { break; }
+              NSArray *pieces = [card splitForWidth:cw first:H - cy - top rest:H - GRPageGap];
               [column replaceObjectsInRange:NSMakeRange(0, 1) withObjectsFromArray:pieces];
               card = column.firstObject; h = MIN(H - cy, [self fittingHeight:card width:cw]);
             }
@@ -758,7 +770,9 @@ static const CGFloat GRPageGap = 16;
     CGFloat w = [item[@"fill"] boolValue] ? W : MIN(W, ceil([view sizeThatFits:CGSizeMake(W, CGFLOAT_MAX)].width));
     CGFloat h = [item[@"height"] doubleValue] > 0 ? [item[@"height"] doubleValue] : [self fittingHeight:view width:w];
     CGFloat top = fresh && pages.count > 1 ? GRPageGap : [item[@"top"] doubleValue];
-    if(y + top + h > H && !fresh) { newPage(); continue; }
+    // A long card fills what is left of the page and continues on the next one; a short one moves on whole.
+    BOOL splittable = [view isKindOfClass:[GRFlowView class]] && ((GRFlowView *)view).fillsPages && [item[@"height"] doubleValue] <= 0;
+    if(y + top + h > H && !fresh && !(splittable && H - y - top >= GRSplitMinimum && h > H * .5)) { newPage(); continue; }
     // A section heading never stays alone at the bottom of a page: it moves on with the item that follows it.
     if(!fresh && queue.count > 1 && [view isKindOfClass:[UILabel class]] && (view.accessibilityTraits & UIAccessibilityTraitHeader)) {
       NSDictionary *next = queue[1];
@@ -1319,7 +1333,7 @@ static NSString *GRDuration(NSInteger seconds) {
     [row addTarget:self action:@selector(summaryTapped:) forControlEvents:UIControlEventTouchUpInside];
     [rows addObject:row];
   }
-  if(rows.count) { [self addRows:rows height:64 top:8]; }
+  if(rows.count) { [self addRows:rows height:56 top:8]; }
   else { [_viewFlow addView:[self note:@"Pendent de carregar l’inventari. Comprova la connexió amb el panell."] top:16]; }
   __weak GRMainViewController *weakSelf = self;
   GRButton *all = [GRButton buttonWithTitle:@"Veure tots els dispositius" style:GRButtonStyleOutline handler:^(GRButton *button) {
@@ -1758,21 +1772,61 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
     }
   }
 
-  // Doors and windows
+  // Doors and windows: one tile each with a door or window icon, the open ones first and in the problem colour.
   GRFlowView *openingsCard = nil;
   if(openings.count) {
     openingsCard = [self card:@"PORTES I FINESTRES" note:connected ? (open ? [NSString stringWithFormat:@"%lu %@", (unsigned long)open, open == 1 ? @"oberta" : @"obertes"] : @"Tot tancat") : @""];
-    BOOL first = YES;
-    for(NSDictionary *entity in openings) {
+    NSArray *sorted = [openings sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *x, NSDictionary *y) {
+      BOOL xo = [x[@"state"] isEqual:@"on"], yo = [y[@"state"] isEqual:@"on"];
+      if(xo != yo) { return xo ? NSOrderedAscending : NSOrderedDescending; }
+      return [GRShortName(x, @[]) localizedCompare:GRShortName(y, @[])];
+    }];
+    NSMutableArray *tiles = [NSMutableArray array];
+    for(NSDictionary *entity in sorted) {
       BOOL ok = [entity[@"status"] isEqual:@"ok"] && connected;
       BOOL isOpen = ok && [entity[@"state"] isEqual:@"on"];
       NSString *dc = GRStr(GRDict(entity[@"attributes"])[@"device_class"]) ?: @"";
-      BOOL window = [dc isEqualToString:@"window"] || [GRStr(entity[@"entity_id"]) rangeOfString:@"finestra"].location != NSNotFound;
-      NSString *state = !ok ? [GRLogic stateTextForEntity:entity connected:connected demo:NO] : (isOpen ? (window ? @"Oberta" : @"Oberta") : @"Tancada");
+      NSString *entityId = GRStr(entity[@"entity_id"]) ?: @"";
+      BOOL window = [dc isEqualToString:@"window"] || [entityId rangeOfString:@"finestra"].location != NSNotFound || [entityId rangeOfString:@"window"].location != NSNotFound;
+      UIColor *color = !ok || isOpen ? t.issue : t.muted;
+      NSString *state = !ok ? [GRLogic stateTextForEntity:entity connected:connected demo:NO] : (isOpen ? @"Oberta" : @"Tancada");
       NSString *ago = ok ? [GRLogic agoText:GRStr(entity[@"changed"]) now:now] : nil;
-      [openingsCard addView:[self statusRow:GRShortName(entity, @[]) detail:ago ? [@"Des de " stringByAppendingString:ago] : nil state:state lit:NO issue:isOpen || !ok] top:first ? 10 : 0];
-      first = NO;
+      UIImageView *icon = GRIconView(window ? @"window" : @"door", YES, isOpen ? t.issue : (ok ? t.accent : t.muted));
+      if(isOpen) { GRGlow(icon.layer, t.issue, 8); }
+      UILabel *stateLabel = GRLabel(state, GRFont(15, UIFontWeightMedium), color);
+      stateLabel.textAlignment = NSTextAlignmentRight;
+      UILabel *name = GRLabel(GRShortName(entity, @[]), GRFont(18, UIFontWeightLight), isOpen ? t.highlight : t.text);
+      name.adjustsFontSizeToFitWidth = YES; name.minimumScaleFactor = .7;
+      UILabel *since = GRLabel(ago ? [@"Des de " stringByAppendingString:ago] : @"", GRFont(12, UIFontWeightRegular), t.muted);
+      GRBlockView *tile = [GRBlockView new];
+      tile.layer.cornerRadius = GRRadius(14); tile.layer.borderWidth = isOpen ? 1.5 : 1;
+      tile.layer.borderColor = (isOpen ? t.issue : t.edge).CGColor;
+      if(isOpen) { tile.backgroundColor = [t.issue colorWithAlphaComponent:t.night ? .08 : .06]; }
+      for(UIView *view in @[icon, stateLabel, name, since]) { [tile addSubview:view]; }
+      tile.isAccessibilityElement = YES;
+      tile.accessibilityLabel = [NSString stringWithFormat:@"%@ %@: %@%@", window ? @"Finestra" : @"Porta", name.text, state, ago ? [@", des de " stringByAppendingString:ago] : @""];
+      tile.layout = ^(UIView *view) {
+        CGFloat w = view.bounds.size.width;
+        icon.frame = CGRectMake(16, 16, 30, 30);
+        stateLabel.frame = CGRectMake(56, 20, w - 72, 22);
+        name.frame = CGRectMake(16, 56, w - 32, 24);
+        since.frame = CGRectMake(16, 82, w - 32, 16);
+      };
+      [tiles addObject:tile];
     }
+    GRBlockView *grid = [GRBlockView new];
+    for(UIView *tile in tiles) { [grid addSubview:tile]; }
+    NSUInteger (^perRow)(CGFloat) = ^NSUInteger(CGFloat width) { return width >= 560 ? 3 : 2; };
+    grid.measure = ^CGFloat(CGFloat width) { NSUInteger rows = (tiles.count + perRow(width) - 1) / perRow(width); return rows * 112 + (rows - 1) * 12; };
+    grid.layout = ^(UIView *view) {
+      NSUInteger c = perRow(view.bounds.size.width);
+      CGFloat w = floor((view.bounds.size.width - 12 * (c - 1)) / c);
+      for(NSUInteger i = 0; i < tiles.count; i++) {
+        [tiles[i] setFrame:CGRectMake((i % c) * (w + 12), (i / c) * 124, w, 112)];
+        [tiles[i] setNeedsLayout];
+      }
+    };
+    [openingsCard addView:grid top:16];
   }
 
   // Batteries: lowest first, warning below 20 %.
@@ -1809,30 +1863,35 @@ static NSString *GRShortName(NSDictionary *entity, NSArray<NSString *> *suffixes
       };
       [tiles addObject:tile];
     }
-    NSInteger perRow = landscape ? 4 : 3;
+    // Four per row when the card is wide, three in the narrow landscape column.
+    NSUInteger (^perRow)(CGFloat) = ^NSUInteger(CGFloat width) { return width >= 600 ? 4 : 3; };
     GRBlockView *grid = [GRBlockView new];
     for(UIView *tile in tiles) { [grid addSubview:tile]; }
-    NSUInteger rows = (tiles.count + perRow - 1) / perRow;
-    grid.measure = ^CGFloat(CGFloat width) { return rows * 60 + (rows - 1) * 18; };
+    grid.measure = ^CGFloat(CGFloat width) { NSUInteger rows = (tiles.count + perRow(width) - 1) / perRow(width); return rows * 60 + (rows - 1) * 18; };
     grid.layout = ^(UIView *view) {
-      CGFloat w = floor((view.bounds.size.width - 22 * (perRow - 1)) / perRow);
+      NSUInteger c = perRow(view.bounds.size.width);
+      CGFloat w = floor((view.bounds.size.width - 22 * (c - 1)) / c);
       for(NSUInteger i = 0; i < tiles.count; i++) {
-        [tiles[i] setFrame:CGRectMake((i % perRow) * (w + 22), (i / perRow) * 78, w, 60)];
+        [tiles[i] setFrame:CGRectMake((i % c) * (w + 22), (i / c) * 78, w, 60)];
         [tiles[i] setNeedsLayout];
       }
     };
     [batteryCard addView:grid top:16];
   }
 
-  // Arrangement: doors and windows under the alarm, the camera beside them (below them in portrait), then batteries.
-  NSArray *left = openingsCard ? @[alarmCard, openingsCard] : @[alarmCard];
-  if(landscape && cameraCard) {
-    [_viewFlow addView:[self columns:@[left, @[cameraCard]] gap:16] top:16];
+  // Arrangement. Landscape: the alarm with the batteries under it beside the doors and windows on the first page,
+  // the camera on the next. Portrait: alarm, doors and windows, batteries, then the camera.
+  if(landscape) {
+    NSMutableArray *left = [NSMutableArray arrayWithObject:alarmCard], *right = [NSMutableArray array];
+    if(openingsCard) { [right addObject:openingsCard]; }
+    if(batteryCard) { [(openingsCard ? left : right) addObject:batteryCard]; }
+    [_viewFlow addView:[self columns:right.count ? @[left, right] : @[left] gap:16] top:16];
+    if(cameraCard) { [_viewFlow addView:[self columns:@[@[cameraCard], @[]] gap:16] top:16]; }
   } else {
-    for(UIView *card in left) { [_viewFlow addView:card top:16]; }
-    if(cameraCard) { [_viewFlow addView:cameraCard top:16]; }
+    for(UIView *card in @[alarmCard, openingsCard ?: [NSNull null], batteryCard ?: [NSNull null], cameraCard ?: [NSNull null]]) {
+      if([card isKindOfClass:[UIView class]]) { [_viewFlow addView:card top:16]; }
+    }
   }
-  if(batteryCard) { [_viewFlow addView:batteryCard top:16]; }
   if(!alarm && !cameras.count && !openings.count && !batteries.count) {
     [_viewFlow addView:[self note:@"Afegeix a entity_ids l’alarma, els sensors de portes i finestres, la càmera i les bateries que vulguis veure aquí."] top:16];
   }
@@ -2031,9 +2090,9 @@ static NSString *GRAttributeValue(NSString *key, id value, NSString *unit) {
     }
   }
   NSString *stateText = [GRLogic stateTextForEntity:heater connected:self.model.connected demo:self.model.demo];
-  UIView *water = [self heaterFigure:@"AIGUA ARA" value:current ? [[GRLogic shortNumber:current.doubleValue] stringByAppendingString:@"°"] : @"—"
+  UIView *water = [self heaterFigure:@"AIGUA ARA" value:current ? GRDegrees(current.doubleValue) : @"—"
                               detail:heating ?: (ok ? @"" : stateText) color:[heating isEqualToString:@"Escalfant"] ? t.accent : t.text alignRight:NO];
-  UIView *modeFigure = [self heaterFigure:@"MODE" value:ok ? stateText : @"—" detail:GRShortName(heater, @[]) color:t.text alignRight:NO];
+  UIView *modeFigure = [self heaterFigure:@"MODE" value:ok ? stateText : @"—" detail:@"" color:t.text alignRight:NO];
   ((UILabel *)modeFigure.subviews[1]).font = GRFont(30, UIFontWeightLight);
 
   // The dial.
@@ -2080,7 +2139,7 @@ static NSString *GRAttributeValue(NSString *key, id value, NSString *unit) {
     for(UIView *child in away.subviews) { if([child isKindOfClass:[UISwitch class]]) { ((UISwitch *)child).enabled = canCommand && [awayOn[@"enabled"] isEqual:@YES]; } }
   }
   UIView *limits = setTemperature && ok ? [self heaterFigure:@"OBJECTIU ADMÈS" value:[NSString stringWithFormat:@"%@–%@°", GRFormatNumber([GRNum(setTemperature[@"min"]) doubleValue]), GRFormatNumber([GRNum(setTemperature[@"max"]) doubleValue])]
-                                                      detail:unit color:t.text alignRight:YES] : nil;
+                                                      detail:@"" color:t.text alignRight:YES] : nil;
   if(limits) { ((UILabel *)limits.subviews[1]).font = GRDigits(30, UIFontWeightLight); }
 
   GRBlockView *hero = [GRBlockView new];
@@ -2090,7 +2149,7 @@ static NSString *GRAttributeValue(NSString *key, id value, NSString *unit) {
   }
   for(UIView *view in parts) { [hero addSubview:view]; }
   // Landscape: readings | dial | switches side by side. Portrait: a bigger dial on top and the rest in a row below.
-  CGFloat (^dialSize)(CGFloat) = ^CGFloat(CGFloat width) { return width >= 800 ? MIN(400, MAX(300, width * .42)) : MIN(460, width * .64); };
+  CGFloat (^dialSize)(CGFloat) = ^CGFloat(CGFloat width) { return width >= 800 ? MIN(400, MAX(300, width * .42)) : MIN(540, width * .78); };
   hero.measure = ^CGFloat(CGFloat width) { return width >= 800 ? dialSize(width) + 4 : dialSize(width) + 150; };
   hero.layout = ^(UIView *view) {
     CGFloat w = view.bounds.size.width;
@@ -2171,51 +2230,87 @@ static NSString *GRAttributeValue(NSString *key, id value, NSString *unit) {
   return flow;
 }
 
-// Everything the heater reports, and its own sensors and switches, in two cards.
+// Catalan names for the Ariston entities (matched by the end of the entity ID); others keep their own name.
+static NSString *GRHeaterEntityName(NSDictionary *entity, NSDictionary *heater) {
+  NSString *entityId = GRStr(entity[@"entity_id"]) ?: @"";
+  NSArray *names = @[@[@"anti_legionella_cycle", @"Cicle antilegionel·la"], @[@"is_heating", @"Escalfant"], @[@"average_showers", @"Dutxes disponibles"],
+                     @[@"proc_req_temp", @"Temperatura de procés"], @[@"errors_count", @"Errors"],
+                     @[@"heating_pump_electricity_consumption", @"Consum de la bomba de calor"], @[@"resistor_electricity_consumption", @"Consum de la resistència"],
+                     @[@"max_setpoint_temperature", @"Objectiu màxim permès"], @[@"anti_cooling_temperature", @"Temperatura antigel"],
+                     @[@"permanent_boost", @"Boost permanent"], @[@"night_mode", @"Mode nocturn"], @[@"anti_legionella", @"Antilegionel·la"],
+                     @[@"anti_cooling", @"Antigel"], @[@"_power", @"Alimentació"]];
+  for(NSArray *pair in names) { if([entityId hasSuffix:pair[0]]) { return pair[1]; } }
+  NSString *name = GRShortName(entity, @[]), *prefix = GRShortName(heater, @[]);
+  for(NSString *drop in @[[prefix stringByAppendingString:@" Ariston "], [prefix stringByAppendingString:@" "]]) {
+    if(name.length > drop.length && [name.lowercaseString hasPrefix:drop.lowercaseString]) { name = [name substringFromIndex:drop.length]; break; }
+  }
+  return name.length ? [name stringByReplacingCharactersInRange:NSMakeRange(0, 1) withString:[[name substringToIndex:1] uppercaseString]] : entityId;
+}
+
+// The value of one of the heater's own entities: yes or no for detectors, numbers without a trailing ".0".
+- (NSString *)heaterEntityValue:(NSDictionary *)entity {
+  NSString *domain = GRStr(entity[@"domain"]), *state = GRStr(entity[@"state"]);
+  BOOL fine = [entity[@"status"] isEqual:@"ok"] && self.model.connected;
+  if(!fine) { return [GRLogic stateTextForEntity:entity connected:self.model.connected demo:self.model.demo]; }
+  if([domain isEqualToString:@"binary_sensor"]) { return [state isEqualToString:@"on"] ? @"Sí" : @"No"; }
+  if([domain isEqualToString:@"switch"]) { return [state isEqualToString:@"on"] ? @"Activat" : @"Desactivat"; }
+  NSNumber *number = [GRLogic numericState:entity connected:YES];
+  if(number) {
+    NSString *unit = GRStr(GRDict(entity[@"attributes"])[@"unit_of_measurement"]);
+    if(!unit.length && [GRStr(entity[@"entity_id"]) rangeOfString:@"temperature"].location != NSNotFound) { unit = @"°C"; }
+    NSString *text = [GRFormatNumber(number.doubleValue) stringByReplacingOccurrencesOfString:@"." withString:@","];
+    return unit.length ? [NSString stringWithFormat:@"%@ %@", text, unit] : text;
+  }
+  return [GRLogic stateTextForEntity:entity connected:YES demo:NO];
+}
+
+// Second page: what the dial does not show, the heater's own data and its switches (with a switch when verified).
 - (NSArray<GRFlowView *> *)heaterInfoCards:(NSDictionary *)heater {
+  __weak GRMainViewController *weakSelf = self;
   NSDictionary *a = GRDict(heater[@"attributes"]) ?: @{};
   BOOL ok = [heater[@"status"] isEqual:@"ok"] && self.model.connected;
+  BOOL canCommand = self.model.connected && !self.model.preview && !self.model.busy;
   NSString *unit = GRStr(a[@"temperature_unit"]) ?: @"°C";
-  NSMutableArray *cards = [NSMutableArray array];
+  GRFlowView *data = [self card:@"DADES" note:@""];
+  data.fillsPages = YES;
+  BOOL first = YES;
   if(ok) {
-    GRFlowView *info = [self card:@"INFORMACIÓ" note:GRShortName(heater, @[])];
-    NSDictionary *labels = @{@"current_temperature": @"Temperatura actual", @"temperature": @"Temperatura objectiu",
-                             @"target_temp_high": @"Objectiu màxim", @"target_temp_low": @"Objectiu mínim", @"min_temp": @"Mínim admès",
-                             @"max_temp": @"Màxim admès", @"target_temp_step": @"Pas de temperatura", @"operation_mode": @"Mode", @"away_mode": @"Mode absència"};
-    NSArray *order = @[@"current_temperature", @"temperature", @"target_temp_low", @"target_temp_high", @"operation_mode", @"away_mode", @"min_temp", @"max_temp", @"target_temp_step"];
-    NSSet *skip = [NSSet setWithArray:@[@"friendly_name", @"supported_features", @"operation_list", @"temperature_unit"]];
-    NSMutableArray *keys = [NSMutableArray array];
-    for(NSString *key in order) { if(a[key] && a[key] != [NSNull null]) { [keys addObject:key]; } }
+    NSDictionary *labels = @{@"target_temp_high": @"Objectiu màxim", @"target_temp_low": @"Objectiu mínim", @"target_temp_step": @"Pas de temperatura"};
+    // Already on the first page: current and target temperature, mode, limits and away mode.
+    NSSet *skip = [NSSet setWithArray:@[@"friendly_name", @"supported_features", @"operation_list", @"temperature_unit", @"current_temperature",
+                                        @"temperature", @"operation_mode", @"min_temp", @"max_temp", @"away_mode"]];
     for(NSString *key in [[a allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
-      if(![keys containsObject:key] && ![skip containsObject:key] && a[key] != [NSNull null] && ![a[key] isKindOfClass:[NSArray class]]) { [keys addObject:key]; }
-    }
-    BOOL first = YES;
-    for(NSString *key in keys) {
-      NSString *label = labels[key];
-      if(!label) { label = [[key stringByReplacingOccurrencesOfString:@"_" withString:@" "] stringByReplacingCharactersInRange:NSMakeRange(0, 1) withString:[[key substringToIndex:1] uppercaseString]]; }
-      [info addView:[self infoRow:label value:GRAttributeValue(key, a[key], unit) issue:NO] top:first ? 10 : 0];
+      if([skip containsObject:key] || a[key] == [NSNull null] || [a[key] isKindOfClass:[NSArray class]]) { continue; }
+      NSString *label = labels[key] ?: [[key stringByReplacingOccurrencesOfString:@"_" withString:@" "] stringByReplacingCharactersInRange:NSMakeRange(0, 1) withString:[[key substringToIndex:1] uppercaseString]];
+      [data addView:[self infoRow:label value:GRAttributeValue(key, a[key], unit) issue:NO] top:first ? 10 : 0];
       first = NO;
     }
-    if(keys.count) { [cards addObject:info]; }
   }
-  NSArray *related = [self entitiesOfHeater:heater];
-  if(related.count) {
-    GRFlowView *sensors = [self card:@"SENSORS I INTERRUPTORS" note:@""];
-    BOOL first = YES;
-    for(NSDictionary *entity in related) {
-      BOOL fine = [entity[@"status"] isEqual:@"ok"] && self.model.connected;
-      NSString *name = GRShortName(entity, @[]);
-      NSString *prefix = GRShortName(heater, @[]);
-      // "Escalfador Ariston anti cooling" reads better as "Anti cooling" inside the heater's own card.
-      for(NSString *drop in @[[prefix stringByAppendingString:@" Ariston "], [prefix stringByAppendingString:@" "]]) {
-        if(name.length > drop.length && [name.lowercaseString hasPrefix:drop.lowercaseString]) { name = [name substringFromIndex:drop.length]; break; }
+  GRFlowView *switches = [self card:@"INTERRUPTORS" note:@""];
+  switches.fillsPages = YES;
+  BOOL firstSwitch = YES;
+  for(NSDictionary *entity in [self entitiesOfHeater:heater]) {
+    NSString *name = GRHeaterEntityName(entity, heater);
+    BOOL fine = [entity[@"status"] isEqual:@"ok"] && self.model.connected;
+    if([GRStr(entity[@"domain"]) isEqualToString:@"switch"]) {
+      NSDictionary *on = GRControl(entity, @"turn_on"), *off = GRControl(entity, @"turn_off");
+      UIView *row = nil;
+      if(fine && [on[@"enabled"] isEqual:@YES] && [off[@"enabled"] isEqual:@YES]) {
+        row = [self switchRow:name on:[entity[@"state"] isEqual:@"on"] changed:^(BOOL value) { [weakSelf sendAction:entity control:value ? on : off value:nil code:nil]; }];
+        for(UIView *child in row.subviews) { if([child isKindOfClass:[UISwitch class]]) { ((UISwitch *)child).enabled = canCommand; } }
+      } else {
+        row = [self infoRow:name value:[self heaterEntityValue:entity] issue:!fine];
       }
-      if(name.length) { name = [name stringByReplacingCharactersInRange:NSMakeRange(0, 1) withString:[[name substringToIndex:1] uppercaseString]]; }
-      [sensors addView:[self infoRow:name value:[GRLogic stateTextForEntity:entity connected:self.model.connected demo:self.model.demo] issue:!fine] top:first ? 10 : 0];
+      [switches addView:row top:firstSwitch ? 10 : 0];
+      firstSwitch = NO;
+    } else {
+      [data addView:[self infoRow:name value:[self heaterEntityValue:entity] issue:!fine] top:first ? 10 : 0];
       first = NO;
     }
-    [cards addObject:sensors];
   }
+  NSMutableArray *cards = [NSMutableArray array];
+  if(!first) { [cards addObject:data]; }
+  if(!firstSwitch) { [cards addObject:switches]; }
   return cards;
 }
 
@@ -2254,7 +2349,7 @@ static NSString *GRAttributeValue(NSString *key, id value, NSString *unit) {
   for(NSString *device in devices) {
     NSArray *keys = buttons[device];
     NSString *title = device.length ? [[device stringByReplacingOccurrencesOfString:@"_" withString:@" "] uppercaseString] : @"COMANDAMENT";
-    GRFlowView *card = [self card:title note:name];
+    GRFlowView *card = [self card:title note:devices.count > 1 ? @"" : name];
     GRBlockView *grid = [GRBlockView new];
     for(UIView *button in keys) { [grid addSubview:button]; }
     NSUInteger (^columns)(CGFloat) = ^NSUInteger(CGFloat width) { return MAX(2, MIN(5, (NSUInteger)floor((width + 10) / 120))); };
@@ -2278,8 +2373,10 @@ static NSString *GRAttributeValue(NSString *key, id value, NSString *unit) {
 }
 
 // Cards side by side in landscape (two columns, filled alternately), one below the other in portrait.
-- (void)addCards:(NSArray<UIView *> *)cards {
-  if([self landscape] && cards.count > 1) {
+- (void)addCards:(NSArray<UIView *> *)cards { [self addCards:cards columnsInPortrait:NO]; }
+
+- (void)addCards:(NSArray<UIView *> *)cards columnsInPortrait:(BOOL)portraitColumns {
+  if(([self landscape] || portraitColumns) && cards.count > 1) {
     NSMutableArray *left = [NSMutableArray array], *right = [NSMutableArray array];
     for(NSUInteger i = 0; i < cards.count; i++) { [(i % 2 ? right : left) addObject:cards[i]]; }
     [_viewFlow addView:[self columns:@[left, right] gap:16] top:16];
@@ -2311,12 +2408,12 @@ static NSString *GRAttributeValue(NSString *key, id value, NSString *unit) {
       if([[GRStr(light[@"entity_id"]) componentsSeparatedByString:@"."].lastObject isEqualToString:objectId]) { [items addObject:light]; }
     }
     NSString *room = GRStr([GRLogic roomWithId:GRStr(fan[@"room"]) ?: @""][@"name"]);
-    GRFlowView *card = [self card:room ? room.uppercaseString : @"VENTILADOR" note:GRShortName(fan, @[])];
+    GRFlowView *card = [self card:room ? room.uppercaseString : @"VENTILADOR" note:@""];
     [self addEntities:items to:card];
     [cards addObject:card];
   }
   if(!cards.count) { [_viewFlow addView:[self note:@"Afegeix els ventiladors (fan.*) a entity_ids. Si no publiquen percentage_step, indica’n les velocitats a fan_speeds (fan.entitat:6)."] top:16]; return; }
-  [self addCards:cards];
+  [self addCards:cards columnsInPortrait:YES];
 }
 
 - (void)renderRemotes {
@@ -2324,7 +2421,7 @@ static NSString *GRAttributeValue(NSString *key, id value, NSString *unit) {
   NSMutableArray *cards = [NSMutableArray array];
   for(NSDictionary *remote in [self entitiesInDomain:@"remote"]) { [cards addObjectsFromArray:[self remoteCards:remote]]; }
   if(!cards.count) { [_viewFlow addView:[self note:@"Afegeix els emissors d’infrarojos o ràdio (remote.*) a entity_ids i els seus botons a remote_buttons."] top:16]; return; }
-  [self addCards:cards];
+  [self addCards:cards columnsInPortrait:YES];
 }
 
 #pragma mark - Energy page (PVPC electricity price)
@@ -2770,6 +2867,7 @@ static BOOL GRIsActiveState(NSString *domain, NSString *state) {
     GRFlowView *group = [GRFlowView new];
     group.insets = UIEdgeInsetsMake(0, 26, 0, 0);
     __block GRWrapView *buttons = nil;
+    _controlReasons = [NSMutableOrderedSet orderedSet];
     for(id control in controls) {
       // On and off live in the switch when both exist.
       if(!GRDict(control) || (toggle && (control == turnOn || control == turnOff))) { continue; }
@@ -2777,14 +2875,14 @@ static BOOL GRIsActiveState(NSString *domain, NSString *state) {
     }
     if(toggle && !toggle.enabled && ok) {
       NSString *reason = GRStr(turnOn[@"reason"]) ?: GRStr(turnOff[@"reason"]);
-      if(reason.length) { [group addView:[self note:reason] top:8]; }
+      if(reason.length) { [_controlReasons insertObject:reason atIndex:0]; }
     }
     if(!controls.count && ![entity[@"domain"] isEqual:@"sensor"] && ![entity[@"domain"] isEqual:@"binary_sensor"]) {
       [group addView:[self note:@"Controls pendents de verificar."] top:6];
     }
-    UILabel *identifier = GRWrappingLabel(entity[@"entity_id"], GRFont(11, UIFontWeightRegular), t.faint, 0);
-    identifier.lineBreakMode = NSLineBreakByCharWrapping;
-    [group addView:identifier top:8];
+    // Each reason a control is blocked appears once, under all the controls (the IDs are in the verification report).
+    for(NSString *reason in _controlReasons) { [group addView:[self note:reason] top:8]; }
+    _controlReasons = nil;
     [item addView:group top:0];
     [parent addView:item top:0];
     [parent addView:[GRRuleView ruleWithColor:t.line] top:0];
@@ -2903,8 +3001,8 @@ static BOOL GRIsActiveState(NSString *domain, NSString *state) {
     [*buttons addSubview:button];
   }
   if(!enabled && GRStr(control[@"reason"]).length) {
-    *buttons = nil;
-    [group addView:[self note:control[@"reason"]] top:6];
+    if(_controlReasons) { [_controlReasons addObject:control[@"reason"]]; }
+    else { *buttons = nil; [group addView:[self note:control[@"reason"]] top:6]; }
   }
 }
 

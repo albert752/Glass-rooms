@@ -38,8 +38,10 @@ __attribute__((constructor)) static void GRInstallSnapshots(void) {
     void (^add)(NSString *, void (^)(void)) = ^(NSString *name, void (^block)(void)) {
       [steps addObject:@[name.length ? [prefix stringByAppendingString:name] : @"", [block copy]]];
     };
-    // Both styles, by night and by day.
+    // Both styles, by night and by day; GR_SNAPSHOT_LOOKS="warm-night,jarvis-day" picks some of them.
+    NSString *only = [NSProcessInfo processInfo].environment[@"GR_SNAPSHOT_LOOKS"];
     for(NSArray *look in @[@[@"warm", @"night"], @[@"jarvis", @"night"], @[@"jarvis", @"day"], @[@"warm", @"day"]]) {
+      if(only.length && ![[only componentsSeparatedByString:@","] containsObject:[NSString stringWithFormat:@"%@-%@", look[0], look[1]]]) { continue; }
       NSString *suffix = [NSString stringWithFormat:@"-%@-%@", look[0], look[1]];
       add(@"", ^{ [panel closeModal]; [panel setStyleChoice:look[0]]; [panel setThemeChoice:look[1]]; [panel navigate:@"rooms"]; });
       add([@"rooms" stringByAppendingString:suffix], ^{});
@@ -55,6 +57,10 @@ __attribute__((constructor)) static void GRInstallSnapshots(void) {
       add([@"security" stringByAppendingString:suffix], ^{ [panel navigate:@"security"]; });
       add([@"security-p2" stringByAppendingString:suffix], ^{ [panel showPage:1]; });
       add([@"overview" stringByAppendingString:suffix], ^{ [panel navigate:@"overview"]; });
+      add([@"overview-p2" stringByAppendingString:suffix], ^{ [panel showPage:1]; });
+      add([@"lights-drawer" stringByAppendingString:suffix], ^{ [panel navigate:@"lights"]; });
+      add([@"office-drawer" stringByAppendingString:suffix], ^{ [panel closeModal]; [panel navigate:@"rooms"]; [panel openRoom:@"despatx"]; });
+      add(@"", ^{ [panel closeModal]; });
       add([@"climate-after" stringByAppendingString:suffix], ^{ [panel navigate:@"climate"]; });
       add([@"settings" stringByAppendingString:suffix], ^{ [panel navigate:@"settings"]; });
       add([@"settings-p2" stringByAppendingString:suffix], ^{ [panel showPage:1]; });

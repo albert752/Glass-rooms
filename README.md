@@ -1,8 +1,27 @@
 # Glass Rooms
 
-## Revisió 1.2.2
+## Revisió 1.2.3
 
-**Novetats 1.2.2 (app per a iPad):**
+**Novetats 1.2.3 (app per a iPad):** una revisió visual completa de totes les pàgines, en horitzontal i en vertical i en els dos estils.
+
+- **Seguretat:** les portes i finestres són a la primera pàgina, al costat de l'alarma, en rajoles amb una icona de porta o de finestra, el nom, l'estat i des de quan. Les obertes surten primer i en vermell. Les bateries van sota l'alarma i la càmera passa a la pàgina següent.
+- **Escalfador:**
+  - la segona pàgina té dues targetes: «Dades» i «Interruptors»;
+  - els noms dels sensors Ariston surten en català, per exemple «Dutxes disponibles» o «Temperatura de procés»;
+  - els interruptors de l'escalfador tenen un interruptor de veritat quan estan verificats;
+  - les temperatures es mostren igual a tot arreu («51°»);
+  - en vertical, el dial és més gran.
+- **Ventiladors i comandaments:**
+  - també en dues columnes en vertical;
+  - sense subtítols repetits;
+  - un ventilador apagat ja no mostra «Velocitat: 0 %».
+- **Calaixos:**
+  - ja no mostren l'ID de cada entitat (es pot veure a l'informe de verificació);
+  - cada motiu de bloqueig surt una sola vegada.
+- **Resum:** cap en una sola pàgina.
+- **Paginació:** una llista llarga omple el final d'una pàgina abans de continuar a la següent. A les gràfiques petites del vertical, el valor actual ja no tapa el màxim i el mínim.
+
+**1.2.2 (app per a iPad):**
 
 - **Sense desplaçament vertical:** cap pàgina es desplaça amunt i avall. Si el contingut no hi cap, continua en una pàgina següent: es passa lliscant el dit cap als costats o tocant els punts de sota, com a la pantalla d'inici d'iOS. El títol de la pàgina es queda fix. Les targetes llargues es parteixen entre pàgines i un títol de secció no queda mai sol al final d'una pàgina. Els calaixos laterals sí que es continuen desplaçant.
 - **Escalfador:** un termòstat circular al centre de la pàgina. L'arc il·luminat arriba fins a la temperatura objectiu, que es canvia arrossegant el dit per l'anell o amb − i +. Un arc interior i una marca indiquen a quina temperatura és l'aigua ara. A l'esquerra hi ha la temperatura de l'aigua, si està escalfant i el mode; a la dreta, l'encesa i el mode absència; a sota, els modes. La informació i els sensors passen a la pàgina següent.

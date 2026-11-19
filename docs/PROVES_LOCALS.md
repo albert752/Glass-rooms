@@ -197,3 +197,15 @@ Data: **19 de novembre de 2026**.
 | Captures Mac Catalyst 1024×768 i 768×1024 | Totes les pàgines en els dos estils, de dia i de nit, i la segona pàgina d'Estances, Escalfador, Comandaments, Preu de la llum, Seguretat i Ajustos: cap desplaçament vertical, punts de pàgina a sota, seccions senceres; termòstat amb objectiu, temperatura actual, − i + |
 
 No comprovat a l'iPad real: el pas de pàgina amb el dit, l'arrossegament del termòstat i el rendiment a l'A5.
+
+## Revisió 1.2.3 — revisió visual completa
+
+Data: **19 de novembre de 2026**. Home Assistant simulat amb les entitats reals de casa (grups ZHA, escalfador Ariston i els seus sensors, ventiladors CREATE, emissor IR amb la tele i la llum de sostre, PVPC, temps, alarma, portes, finestres, càmera i bateries).
+
+| Comprovació executada | Resultat |
+|---|---|
+| `python3 -m unittest discover -s tests` | Totes les proves superades (servidor i app nativa) |
+| Compilació iOS 9 (`ios/scripts/build.sh`) | Correcta amb `-Werror` per a armv7 i arm64 |
+| Captures Mac Catalyst 1024×768 i 768×1024 | 84 captures (totes les pàgines, segones pàgines, calaixos i teclat de l'alarma, en Nit càlida i Jarvis) revisades una per una: marges, alineació, textos repetits, paginació; corregit el que s'indica a la revisió 1.2.3 del README |
+
+No comprovat a l'iPad real.

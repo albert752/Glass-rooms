@@ -34,6 +34,8 @@ typedef NS_ENUM(NSInteger, GRButtonStyle) {
 // Vertical stack: each child receives the full width (or its natural width) and its fitting height.
 @interface GRFlowView : UIView
 @property (nonatomic) UIEdgeInsets insets;
+// A long list that may be split to fill the end of a page (other flows move to the next page whole).
+@property (nonatomic) BOOL fillsPages;
 - (void)addView:(UIView *)view;
 - (void)addView:(UIView *)view top:(CGFloat)top;
 - (void)addView:(UIView *)view top:(CGFloat)top fill:(BOOL)fill;

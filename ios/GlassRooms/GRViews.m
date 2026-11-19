@@ -189,6 +189,7 @@ static CGFloat GRFittingHeight(UIView *view, CGFloat width) {
 - (GRFlowView *)emptyCopy {
   GRFlowView *copy = [[self class] new];
   copy.insets = self.insets;
+  copy.fillsPages = self.fillsPages;
   copy.backgroundColor = self.backgroundColor;
   copy.layer.cornerRadius = self.layer.cornerRadius;
   copy.layer.borderWidth = self.layer.borderWidth;

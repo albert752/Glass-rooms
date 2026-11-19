@@ -239,7 +239,7 @@ static NSCalendar *GRCalendar(void) {
     if(kelvin) { [parts addObject:[NSString stringWithFormat:@"Color: %@ K", GRFormatNumber(kelvin.doubleValue)]]; }
   }
   NSNumber *percentage = GRNum(a[@"percentage"]);
-  if([domain isEqualToString:@"fan"] && percentage) { [parts addObject:[NSString stringWithFormat:@"Velocitat: %@%%", GRFormatNumber(percentage.doubleValue)]]; }
+  if([domain isEqualToString:@"fan"] && percentage && percentage.doubleValue > 0 && [GRStr(entity[@"state"]) isEqualToString:@"on"]) { [parts addObject:[NSString stringWithFormat:@"Velocitat: %@%%", GRFormatNumber(percentage.doubleValue)]]; }
   if([domain isEqualToString:@"media_player"]) {
     NSNumber *volume = GRNum(a[@"volume_level"]);
     if(GRStr(a[@"media_title"]).length) { [parts addObject:a[@"media_title"]]; }
